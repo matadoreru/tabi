@@ -9,6 +9,8 @@ services:
       DENO_DIR: /tmp/deno-dir
       PORT: "4173"
       TABI_DATABASE_PATH: /app/data/tabi.sqlite
+      TABI_GOOGLE_MAPS_API_KEY: "${TABI_GOOGLE_MAPS_API_KEY:-}"
+      TABI_GOOGLE_MAPS_MAP_ID: "${TABI_GOOGLE_MAPS_MAP_ID:-}"
       TABI_PUBLIC_ORIGIN: "${TABI_PUBLIC_ORIGIN:-}"
       TABI_SECURE_COOKIE: "${TABI_SECURE_COOKIE:-true}"
     ports:

@@ -40,7 +40,7 @@ async function staticFile(request, pathname) {
         "x-content-type-options": "nosniff",
         "referrer-policy": "same-origin",
         "content-security-policy":
-          "default-src 'self'; img-src 'self' data: https:; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'self'; frame-ancestors 'none'",
+          "default-src 'self'; img-src 'self' data: https:; connect-src 'self' https://*.googleapis.com https://*.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; worker-src 'self' blob:; base-uri 'self'; frame-ancestors 'none'",
       },
     });
   } catch (error) {

@@ -45,12 +45,14 @@ export const esc = (value = "") =>
     /[&<>'"]/g,
     (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]),
   );
-export const formatDate = (date, options = {}) =>
-  date
-    ? new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", ...options }).format(
-      new Date(`${date}T12:00:00`),
-    )
-    : "—";
+export const searchKey = (value = "") =>
+  String(value).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("es").trim();
+export const formatDate = (date, options = {}) => {
+  if (!date) return "—";
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T12:00:00`) : new Date(date);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", ...options }).format(parsed);
+};
 export const formatMoney = (amount, currency = "JPY") =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency, maximumFractionDigits: currency === "JPY" ? 0 : 2 })
     .format(Number(amount || 0));
@@ -91,6 +93,23 @@ export function modal({ title, fields, submitLabel = "Guardar", dangerLabel = ""
         field.empty ? `<option value="">${esc(field.empty)}</option>` : ""
       }${options}</select>`;
     }
+    if (field.type === "autocomplete") {
+      control =
+        `<div class="autocomplete" data-autocomplete><input id="field-${field.name}" name="${field.name}" type="text" value="${
+          esc(value)
+        }" ${required} placeholder="${
+          esc(field.placeholder || "Escribe para buscar…")
+        }" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="field-${field.name}-options"><div id="field-${field.name}-options" class="autocomplete-options" role="listbox" hidden>${
+          (field.options || []).map((option) => {
+            const item = typeof option === "string" ? { value: option, label: option } : option;
+            return `<button type="button" role="option" data-autocomplete-option data-value="${
+              esc(item.value)
+            }" data-search-key="${esc(searchKey(`${item.value} ${item.label} ${item.code || ""}`))}">${
+              esc(item.label)
+            }</button>`;
+          }).join("")
+        }</div></div>`;
+    }
     if (field.type === "textarea") {
       control = `<textarea id="field-${field.name}" name="${field.name}" placeholder="${
         esc(field.placeholder || "")
@@ -121,6 +140,73 @@ export function modal({ title, fields, submitLabel = "Guardar", dangerLabel = ""
   root.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", close));
   root.querySelector(".modal-backdrop").addEventListener("click", (event) => {
     if (event.target.classList.contains("modal-backdrop")) close();
+  });
+  root.querySelectorAll("[data-autocomplete]").forEach((autocomplete) => {
+    const input = autocomplete.querySelector("input");
+    const list = autocomplete.querySelector("[role=listbox]");
+    const optionElements = [...list.querySelectorAll("[data-autocomplete-option]")];
+    let activeIndex = -1;
+    const visible = () => optionElements.filter((option) => !option.hidden);
+    const closeOptions = () => {
+      list.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+      activeIndex = -1;
+      optionElements.forEach((option) => option.classList.remove("active"));
+    };
+    const validate = () => {
+      const exact = optionElements.some((option) => option.dataset.value === input.value);
+      input.setCustomValidity(!input.value || exact ? "" : "Selecciona un país de la lista.");
+    };
+    const filterOptions = () => {
+      const query = searchKey(input.value);
+      let count = 0;
+      optionElements.forEach((option) => {
+        option.hidden = Boolean(query) && !option.dataset.searchKey.includes(query);
+        if (!option.hidden) count++;
+      });
+      list.hidden = count === 0;
+      input.setAttribute("aria-expanded", String(count > 0));
+      activeIndex = -1;
+      validate();
+    };
+    const choose = (option) => {
+      input.value = option.dataset.value;
+      input.setCustomValidity("");
+      closeOptions();
+      input.focus();
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const move = (direction) => {
+      const available = visible();
+      if (!available.length) return;
+      activeIndex = (activeIndex + direction + available.length) % available.length;
+      optionElements.forEach((option) => option.classList.remove("active"));
+      available[activeIndex].classList.add("active");
+      available[activeIndex].scrollIntoView({ block: "nearest" });
+    };
+    input.addEventListener("focus", filterOptions);
+    input.addEventListener("input", filterOptions);
+    input.addEventListener("blur", () => setTimeout(closeOptions, 100));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (list.hidden) filterOptions();
+        move(event.key === "ArrowDown" ? 1 : -1);
+      } else if (event.key === "Enter" && activeIndex >= 0) {
+        event.preventDefault();
+        choose(visible()[activeIndex]);
+      } else if (event.key === "Escape") {
+        event.stopPropagation();
+        closeOptions();
+      }
+    });
+    optionElements.forEach((option) =>
+      option.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        choose(option);
+      })
+    );
+    validate();
   });
   root.querySelector("form").addEventListener("submit", async (event) => {
     event.preventDefault();

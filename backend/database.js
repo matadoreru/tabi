@@ -79,6 +79,10 @@ const migrations = [
   UPDATE users SET username = lower(substr(email, 1, instr(email, '@') - 1)) || '_' || lower(substr(id, -6)) WHERE username IS NULL;
   CREATE UNIQUE INDEX idx_users_username_unique ON users(username COLLATE NOCASE);
   `,
+  `
+  CREATE TABLE funds(id TEXT PRIMARY KEY, trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT REFERENCES users(id) ON DELETE SET NULL, updated_by TEXT REFERENCES users(id) ON DELETE SET NULL);
+  CREATE INDEX idx_funds_trip ON funds(trip_id, updated_at DESC);
+  `,
 ];
 
 export function migrate() {

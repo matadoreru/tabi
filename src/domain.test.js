@@ -28,5 +28,11 @@ Deno.test("calcula presupuesto con compras realizadas", () => {
   assertEquals(result.remaining, 750);
   assertEquals(result.perPerson, 125);
 });
+Deno.test("suma fondos aportados al presupuesto base", () => {
+  const result = budgetSummary({ budget: 1000, travelers: 2 }, [{ actualAmount: 200 }], [], [{ amount: 500 }]);
+  assertEquals(result.budget, 1500);
+  assertEquals(result.funded, 500);
+  assertEquals(result.remaining, 1300);
+});
 Deno.test("calcula distancia geográfica", () =>
   assertAlmostEquals(haversineKm({ lat: 35.7148, lng: 139.7967 }, { lat: 35.7101, lng: 139.7957 }), 0.53, 0.05));

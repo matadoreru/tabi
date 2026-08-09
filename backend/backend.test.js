@@ -1,6 +1,8 @@
 const testDatabase = `/tmp/tabi-test-${Deno.pid}-${Date.now()}.sqlite`;
 Deno.env.set("TABI_DATABASE_PATH", testDatabase);
 Deno.env.set("TABI_PUBLIC_ORIGIN", "https://tabi.example");
+Deno.env.delete("TABI_GOOGLE_MAPS_API_KEY");
+Deno.env.delete("TABI_GOOGLE_MAPS_MAP_ID");
 
 const { api } = await import("./api.js");
 const { handleError } = await import("./http.js");
@@ -65,6 +67,9 @@ Deno.test({
     );
     assert(stored.password_hash !== "correct horse battery staple", "La contraseña nunca debe persistirse en claro");
     assert(stored.password_salt.length > 16);
+    const mapsConfig = await call("GET", "/api/config/maps", null, owner.cookie);
+    assertEquals(mapsConfig.status, 200);
+    assertEquals(mapsConfig.data.enabled, false);
 
     const created = await call("POST", "/api/trips", {
       name: "Japón 2026",
@@ -86,6 +91,14 @@ Deno.test({
     );
     assertEquals(place.status, 201);
     assertEquals(place.data.item.version, 1);
+    const fund = await call("POST", `/api/trips/${tripId}/funds`, {
+      title: "Fondo inicial",
+      contributor: "Hortensi",
+      date: "2026-08-09",
+      currency: "JPY",
+      amount: 100000,
+    }, owner.cookie);
+    assertEquals(fund.status, 201);
 
     const invitation = await call("POST", `/api/trips/${tripId}/invitations`, {
       role: "viewer",
@@ -169,6 +182,7 @@ Deno.test({
 
     const logs = await call("GET", `/api/trips/${tripId}/bootstrap`, null, owner.cookie);
     assertEquals(logs.status, 200);
+    assertEquals(logs.data.funds[0].amount, 100000);
     assert(logs.data.logs.some((entry) => entry.action === "entity.updated"));
   },
 });

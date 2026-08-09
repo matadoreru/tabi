@@ -29,7 +29,7 @@ export function itineraryAnalysis(activities) {
   return { sorted, conflicts, gaps, plannedMinutes, warnings };
 }
 
-export function budgetSummary(trip, expenses, purchases = []) {
+export function budgetSummary(trip, expenses, purchases = [], funds = []) {
   const spent = expenses.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0) +
     purchases.filter((item) => item.status === "Comprado").reduce(
       (sum, item) => sum + Number(item.actualPrice || 0),
@@ -41,9 +41,13 @@ export function budgetSummary(trip, expenses, purchases = []) {
   );
   const shoppingPlanned = purchases.filter((item) => item.status !== "Comprado" && item.status !== "No encontrado")
     .reduce((sum, item) => sum + Number(item.estimatedPrice || 0), 0);
-  const budget = Number(trip?.budget || 0);
+  const baseBudget = Number(trip?.budget || 0);
+  const funded = funds.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const budget = baseBudget + funded;
   return {
     budget,
+    baseBudget,
+    funded,
     spent,
     committed,
     shoppingPlanned,

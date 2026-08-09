@@ -68,13 +68,23 @@ Edita `/srv/docker/tabi/.env`:
 TABI_HOST_PORT=4173
 TABI_IMAGE_TAG=latest
 TABI_PUBLIC_ORIGIN=https://tabi.example.com
+TABI_GOOGLE_MAPS_API_KEY=CLAVE_WEB_RESTRINGIDA
+TABI_GOOGLE_MAPS_MAP_ID=MAP_ID_DE_GOOGLE
 TABI_SECURE_COOKIE=true
 ```
 
 - `TABI_HOST_PORT` es el puerto local de Ubuntu. El valor recomendado es `4173`.
 - `TABI_IMAGE_TAG=latest` permite que Watchtower aplique actualizaciones.
 - `TABI_PUBLIC_ORIGIN` debe ser la URL HTTPS pública exacta configurada en Cloudflare, sin barra final.
+- `TABI_GOOGLE_MAPS_API_KEY` permite cargar Maps JavaScript API y Places. Restríngela al dominio público en Google
+  Cloud.
+- `TABI_GOOGLE_MAPS_MAP_ID` identifica el estilo vectorial usado por los marcadores del mapa.
 - `TABI_SECURE_COOKIE=true` es obligatorio para el acceso HTTPS normal a través de Cloudflare.
+
+Para crear esas credenciales, habilita **Maps JavaScript API**, **Places API** y **Places API (New)** en el mismo
+proyecto de Google Cloud con facturación activa. Configura la clave como clave de sitio web, limita los referentes HTTP
+a `https://tabi.example.com/*`, restringe la clave a esas APIs y crea un Map ID de tipo JavaScript. Sustituye el dominio
+de ejemplo por el hostname público real antes de desplegar.
 
 No hacen falta `DATABASE_URL`, credenciales PostgreSQL, `JWT_SECRET` ni `SESSION_SECRET`: Tabi usa SQLite y genera
 tokens de sesión aleatorios, conservando únicamente sus hashes en la base de datos.

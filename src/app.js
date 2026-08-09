@@ -1,6 +1,6 @@
 import { CATEGORIES } from "./data.js";
 import { countryOptions, TRIP_EMOJIS } from "./countries.js";
-import { budgetSummary, dateRange, durationLabel, groupTotals, itineraryAnalysis, nearbyPlaces } from "./domain.js";
+import { budgetSummary, dateRange, durationLabel, groupTotals, itineraryAnalysis } from "./domain.js";
 import { Store } from "./store.js";
 import { badge, emptyState, esc, formatDate, formatMoney, fullDate, icon, modal, toast } from "./ui.js";
 import { apiClient, ApiError } from "./api-client.js";
@@ -137,6 +137,14 @@ const fields = {
     { name: "person", label: "Persona", type: "select", options: ["Ambos", "Persona 1", "Persona 2"] },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
+  fund: [
+    { name: "title", label: "Concepto", required: true, placeholder: "Ej. Fondo inicial", full: true },
+    { name: "contributor", label: "Aportado por", required: true },
+    { name: "date", label: "Fecha", type: "date", required: true },
+    { name: "currency", label: "Moneda", type: "select", options: ["JPY", "EUR"] },
+    { name: "amount", label: "Importe", type: "number", min: 0.01, step: "0.01", required: true },
+    { name: "notes", label: "Notas", type: "textarea", full: true },
+  ],
   stay: [
     { name: "name", label: "Alojamiento", required: true, full: true },
     { name: "city", label: "Ciudad", required: true },
@@ -246,6 +254,14 @@ function normalizedExpenses() {
     estimatedAmount: item.currency === "EUR"
       ? Number(item.estimatedAmount || 0) / Number(store.getState().settings.exchangeRate || 1)
       : Number(item.estimatedAmount || 0),
+  }));
+}
+function normalizedFunds() {
+  return store.collection("funds").map((item) => ({
+    ...item,
+    amount: item.currency === "EUR"
+      ? Number(item.amount || 0) / Number(store.getState().settings.exchangeRate || 1)
+      : Number(item.amount || 0),
   }));
 }
 
@@ -520,7 +536,14 @@ function createTrip() {
     fields: [
       { name: "name", label: "Nombre", required: true, full: true },
       { name: "emoji", label: "Emoji", type: "select", value: "✈️", options: TRIP_EMOJIS },
-      { name: "country", label: "País", type: "select", empty: "Selecciona un país", options: countryOptions() },
+      {
+        name: "country",
+        label: "País",
+        type: "autocomplete",
+        required: true,
+        placeholder: "Escribe para buscar un país",
+        options: countryOptions(),
+      },
       { name: "startDate", label: "Inicio", type: "date", required: true },
       { name: "endDate", label: "Fin", type: "date", required: true },
       { name: "travelers", label: "Viajeros", type: "number", min: 1, value: 1 },
@@ -643,7 +666,7 @@ function renderDashboard() {
   const activities = activitiesForDate(date).sort((a, b) => a.start.localeCompare(b.start));
   const upcoming = activities[0];
   const expenses = normalizedExpenses();
-  const summary = budgetSummary(trip, expenses, store.collection("purchases"));
+  const summary = budgetSummary(trip, expenses, store.collection("purchases"), normalizedFunds());
   const pendingTasks = store.collection("tasks").filter((task) => task.status !== "Completada");
   const pendingPurchases = store.collection("purchases").filter((item) =>
     item.status === "Pendiente" || item.status === "Encontrado"
@@ -983,55 +1006,190 @@ function placeEmoji(category) {
   })[category] || "📍";
 }
 
+let googleMapsPromise;
+
+function loadGoogleMaps(apiKey) {
+  if (globalThis.google?.maps?.importLibrary) return Promise.resolve(globalThis.google.maps);
+  if (googleMapsPromise) return googleMapsPromise;
+  googleMapsPromise = new Promise((resolve, reject) => {
+    globalThis.__tabiGoogleMapsReady = () => {
+      delete globalThis.__tabiGoogleMapsReady;
+      resolve(globalThis.google.maps);
+    };
+    const script = document.createElement("script");
+    const parameters = new URLSearchParams({
+      key: apiKey,
+      v: "weekly",
+      loading: "async",
+      libraries: "maps,marker,places",
+      language: "es",
+      region: "ES",
+      callback: "__tabiGoogleMapsReady",
+    });
+    script.src = `https://maps.googleapis.com/maps/api/js?${parameters}`;
+    script.async = true;
+    script.onerror = () => reject(new Error("Google Maps no se ha podido cargar."));
+    document.head.append(script);
+  });
+  return googleMapsPromise;
+}
+
+function googlePlaceCategory(type = "") {
+  if (/restaurant|food/.test(type)) return "Restaurante";
+  if (/cafe|coffee/.test(type)) return "Cafetería";
+  if (/museum|art_gallery/.test(type)) return "Museo";
+  if (/park|garden/.test(type)) return "Parque";
+  if (/store|shopping|market/.test(type)) return "Tienda";
+  if (/temple|church|shrine|place_of_worship/.test(type)) return "Templo";
+  return "Actividad";
+}
+
+function googlePlaceCity(place) {
+  const components = place.addressComponents || [];
+  const component = components.find((item) =>
+    item.types?.some((type) => ["locality", "postal_town", "administrative_area_level_2"].includes(type))
+  );
+  return component?.longText || component?.long_name || "Sin especificar";
+}
+
+async function initializeGoogleMap() {
+  const canvas = document.querySelector("#google-map");
+  const searchHost = document.querySelector("#google-place-search");
+  if (!canvas || !searchHost) return;
+  const config = await apiClient.get("/config/maps");
+  if (!config.enabled) {
+    canvas.innerHTML = `<div class="map-message">${
+      icon("map")
+    }<h3>Google Maps necesita configuración</h3><p>Añade <code>TABI_GOOGLE_MAPS_API_KEY</code> y <code>TABI_GOOGLE_MAPS_MAP_ID</code> al archivo <code>.env</code> del servidor.</p></div>`;
+    searchHost.innerHTML = `<p class="cell-sub">Configura Google Maps para buscar lugares.</p>`;
+    return;
+  }
+  await loadGoogleMaps(config.apiKey);
+  const [{ Map }, { AdvancedMarkerElement }, { PlaceAutocompleteElement }] = await Promise.all([
+    google.maps.importLibrary("maps"),
+    google.maps.importLibrary("marker"),
+    google.maps.importLibrary("places"),
+  ]);
+  if (!canvas.isConnected) return;
+  const places = store.collection("places").filter((place) => Number.isFinite(place.lat) && Number.isFinite(place.lng));
+  const map = new Map(canvas, {
+    center: { lat: 36.2048, lng: 138.2529 },
+    zoom: 5,
+    mapId: config.mapId,
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: true,
+  });
+  const bounds = new google.maps.LatLngBounds();
+  places.forEach((place) => {
+    const position = { lat: place.lat, lng: place.lng };
+    bounds.extend(position);
+    const marker = new AdvancedMarkerElement({ map, position, title: place.name });
+    marker.addListener("click", () => {
+      ui.mapPlaceId = place.id;
+      render();
+    });
+  });
+  if (places.length === 1) {
+    map.setCenter({ lat: places[0].lat, lng: places[0].lng });
+    map.setZoom(14);
+  } else if (places.length > 1) {
+    map.fitBounds(bounds, 70);
+  }
+
+  const autocomplete = new PlaceAutocompleteElement();
+  autocomplete.placeholder = "Busca un sitio en Google Maps";
+  searchHost.replaceChildren(autocomplete);
+  autocomplete.addEventListener("gmp-select", async ({ placePrediction }) => {
+    const place = placePrediction.toPlace();
+    await place.fetchFields({
+      fields: [
+        "id",
+        "displayName",
+        "formattedAddress",
+        "location",
+        "viewport",
+        "googleMapsURI",
+        "addressComponents",
+        "primaryType",
+      ],
+    });
+    if (!place.location || !document.querySelector("#google-map")) return;
+    if (place.viewport) map.fitBounds(place.viewport);
+    else {
+      map.setCenter(place.location);
+      map.setZoom(16);
+    }
+    new AdvancedMarkerElement({ map, position: place.location, title: place.displayName });
+    const preview = document.querySelector("#google-place-preview");
+    if (!preview) return;
+    preview.innerHTML = `<div class="map-place-preview"><strong>${esc(place.displayName || "Lugar")}</strong><small>${
+      esc(place.formattedAddress || "Dirección no disponible")
+    }</small>${
+      session.can(PERMISSIONS.TRIP_EDIT)
+        ? `<button class="btn btn-primary" type="button" data-save-google-place>${
+          icon("plus")
+        } Guardar en el viaje</button>`
+        : `<span class="cell-sub">No tienes permiso para guardar lugares.</span>`
+    }</div>`;
+    preview.querySelector("[data-save-google-place]")?.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      const duplicate = store.collection("places").find((item) =>
+        (place.id && item.googlePlaceId === place.id) ||
+        (item.name === place.displayName && Number(item.lat) === place.location.lat() &&
+          Number(item.lng) === place.location.lng())
+      );
+      if (duplicate) {
+        ui.mapPlaceId = duplicate.id;
+        toast("Este lugar ya está guardado");
+        render();
+        return;
+      }
+      try {
+        const saved = await store.add("places", {
+          name: place.displayName || "Lugar sin nombre",
+          city: googlePlaceCity(place),
+          area: "",
+          category: googlePlaceCategory(place.primaryType),
+          status: "Pendiente",
+          address: place.formattedAddress || "",
+          lat: place.location.lat(),
+          lng: place.location.lng(),
+          link: place.googleMapsURI || "",
+          googlePlaceId: place.id || "",
+        });
+        ui.mapPlaceId = saved.id;
+        toast("Lugar guardado en el viaje");
+        render();
+      } catch (error) {
+        event.currentTarget.disabled = false;
+        toast(error.message, "error");
+      }
+    });
+  });
+}
+
 function renderMap() {
   const places = store.collection("places").filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
   const selected = places.find((p) => p.id === ui.mapPlaceId) || places[0];
   if (selected) ui.mapPlaceId = selected.id;
-  const bounds = {
-    minLat: Math.min(...places.map((p) => p.lat), 34),
-    maxLat: Math.max(...places.map((p) => p.lat), 36),
-    minLng: Math.min(...places.map((p) => p.lng), 135),
-    maxLng: Math.max(...places.map((p) => p.lng), 140),
-  };
-  const coords = (p) => ({
-    x: 12 + (p.lng - bounds.minLng) / Math.max(.01, bounds.maxLng - bounds.minLng) * 76,
-    y: 88 - (p.lat - bounds.minLat) / Math.max(.01, bounds.maxLat - bounds.minLat) * 70,
-  });
-  const nearby = selected ? nearbyPlaces(selected, places, 5) : [];
-  return `<section class="card map-layout"><aside class="map-sidebar"><div class="search">${
-    icon("search")
-  }<input data-search placeholder="Buscar en el mapa…" value="${
-    esc(ui.query)
-  }"></div><div class="item-list" style="margin-top:14px">${
-    filtered(places, ["name", "city", "area"]).map((p) =>
+  return `<section class="card map-layout"><aside class="map-sidebar"><div id="google-place-search" class="google-place-search"><span class="cell-sub">Cargando buscador…</span></div><div id="google-place-preview"></div><div class="map-saved-head"><strong>Sitios guardados</strong><span>${places.length}</span></div><div class="item-list">${
+    places.map((p) =>
       `<button class="list-item" style="cursor:pointer;text-align:left;color:inherit" data-map-place="${p.id}"><span class="stat-icon red">${
         placeEmoji(p.category)
       }</span><span class="list-item-main"><strong>${esc(p.name)}</strong><small>${esc(p.city)} · ${
         esc(p.area)
       }</small></span>${icon("chevron")}</button>`
-    ).join("")
-  }</div></aside><div class="map-canvas"><div class="map-water"></div>${
-    places.map((p, index) => {
-      const point = coords(p);
-      return `<button class="map-marker" style="left:${point.x}%;top:${point.y}%" data-map-place="${p.id}"><span class="map-pin"><span>${
-        index + 1
-      }</span></span><span class="map-label">${esc(p.name)}</span></button>`;
-    }).join("")
-  }${
+    ).join("") || `<p class="cell-sub">Busca un sitio arriba para añadirlo al viaje.</p>`
+  }</div>${
     selected
-      ? `<div class="card map-detail"><div class="card-head"><div><h3>${esc(selected.name)}</h3><p>${
+      ? `<div class="map-selected"><div><strong>${esc(selected.name)}</strong><small>${
         esc(selected.address)
-      }</p></div>${badge(selected.status)}</div>${
-        nearby.length
-          ? `<p style="font-size:12px;color:var(--muted)"><strong>Cerca:</strong> ${
-            nearby.slice(0, 2).map((p) => `${esc(p.name)} (${p.distance.toFixed(1)} km)`).join(", ")
-          }</p>`
-          : ""
-      }<a class="btn btn-primary" target="_blank" rel="noreferrer" href="https://www.google.com/maps/dir/?api=1&destination=${selected.lat},${selected.lng}">${
+      }</small></div><a class="btn btn-secondary" target="_blank" rel="noreferrer" href="https://www.google.com/maps/dir/?api=1&destination=${selected.lat},${selected.lng}">${
         icon("external")
-      } Abrir navegación</a></div>`
+      } Cómo llegar</a></div>`
       : ""
-  }</div></section>`;
+  }</aside><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div></section>`;
 }
 
 function toolbar(filters = []) {
@@ -1125,24 +1283,27 @@ function renderBudget() {
   const trip = store.activeTrip,
     expenses = normalizedExpenses(),
     purchases = store.collection("purchases"),
-    summary = budgetSummary(trip, expenses, purchases),
+    funds = store.collection("funds"),
+    summary = budgetSummary(trip, expenses, purchases, normalizedFunds()),
     percent = Math.min(100, summary.spent / Math.max(1, summary.budget) * 100),
     totals = groupTotals(expenses, "category"),
     max = Math.max(...totals.map(([, v]) => v), 1);
   const items = filtered(store.collection("expenses"), ["title", "category", "city", "person"]);
-  return `<div class="grid dashboard-grid"><div class="section-stack"><section class="card card-pad budget-hero"><div><span class="hero-eyebrow" style="color:var(--muted)">Presupuesto disponible</span><div class="stat-value" style="font-size:36px">${
+  return `<div class="grid dashboard-grid"><div class="section-stack"><section class="card card-pad budget-hero"><div><span class="hero-eyebrow" style="color:var(--muted)">Fondos disponibles</span><div class="stat-value" style="font-size:36px">${
     formatMoney(summary.remaining)
-  }</div><p style="color:var(--muted)">de ${
-    formatMoney(summary.budget)
-  } para ${trip.travelers} viajeros</p><div class="legend"><span style="--dot:var(--primary)">Gastado ${
+  }</div><p style="color:var(--muted)">de ${formatMoney(summary.budget)} · base ${
+    formatMoney(summary.baseBudget)
+  } + aportaciones ${formatMoney(summary.funded)}</p><div class="legend"><span style="--dot:var(--primary)">Gastado ${
     formatMoney(summary.spent)
   }</span><span style="--dot:var(--warning)">Comprometido ${
     formatMoney(summary.committed)
   }</span></div></div><div class="ring" style="--value:${percent}%"><div class="ring-label">${
     Math.round(percent)
-  }%<small>utilizado</small></div></div></section><div class="grid grid-3">${
-    statCard("users", "Por persona", formatMoney(summary.perPerson), "Gasto real", "")
-  }${statCard("clock", "Pendiente de pagar", formatMoney(summary.committed), "Gastos previstos", "amber")}${
+  }%<small>utilizado</small></div></div></section><div class="grid grid-4">${
+    statCard("wallet", "Fondos aportados", formatMoney(summary.funded), `${funds.length} aportaciones`, "")
+  }${statCard("users", "Por persona", formatMoney(summary.perPerson), "Gasto real", "")}${
+    statCard("clock", "Pendiente de pagar", formatMoney(summary.committed), "Gastos previstos", "amber")
+  }${
     statCard("bag", "Compras previstas", formatMoney(summary.shoppingPlanned), "Aún no compradas", "red")
   }</div></div><section class="card card-pad"><div class="card-head"><div><h2>Distribución</h2><p>Gasto real por categoría</p></div></div><div class="chart-bars">${
     totals.map(([l, v]) =>
@@ -1150,7 +1311,23 @@ function renderBudget() {
         formatMoney(v)
       }"></div><span class="chart-label">${esc(l)}</span></div>`
     ).join("")
-  }</div></section></div><div class="section-title"><div><h2>Movimientos</h2><p>Previsto frente a pagado</p></div></div>${
+  }</div></section></div><div class="section-title"><div><h2>Fondos del viaje</h2><p>Aportaciones que aumentan el presupuesto disponible</p></div>${
+    session.can(PERMISSIONS.BUDGET_EDIT)
+      ? `<button class="btn btn-primary" data-add-fund>${icon("plus")} Añadir fondos</button>`
+      : ""
+  }</div>${
+    table(
+      ["Concepto", "Aportado por", "Fecha", "Importe"],
+      funds.map((fund) =>
+        `<tr><td><span class="cell-main">${esc(fund.title)}</span><span class="cell-sub">${
+          esc(fund.notes || "Aportación al viaje")
+        }</span></td><td>${esc(fund.contributor)}</td><td>${formatDate(fund.date)}</td><td>${
+          formatMoney(fund.amount, fund.currency)
+        }</td><td>${actions("funds", fund.id)}</td></tr>`
+      ),
+      "Todavía no hay fondos aportados",
+    )
+  }<div class="section-title"><div><h2>Movimientos</h2><p>Previsto frente a pagado</p></div></div>${
     toolbar(["Todos", ...CATEGORIES.expense])
   }${
     table(
@@ -1373,7 +1550,7 @@ function renderMore() {
 }
 
 function openEditor(collection, idValue) {
-  const required = collection === "expenses"
+  const required = collection === "expenses" || collection === "funds"
     ? PERMISSIONS.BUDGET_EDIT
     : collection === "documents"
     ? PERMISSIONS.DOCUMENT_UPLOAD
@@ -1388,6 +1565,7 @@ function openEditor(collection, idValue) {
     tasks: ["task", "Tarea"],
     purchases: ["purchase", "Compra"],
     expenses: ["expense", "Gasto"],
+    funds: ["fund", "Aportación"],
     stays: ["stay", "Alojamiento"],
     transports: ["transport", "Transporte"],
     reservations: ["reservation", "Reserva"],
@@ -1402,6 +1580,7 @@ function openEditor(collection, idValue) {
     task: { phase: "Antes", priority: "Media", status: "Pendiente" },
     purchase: { status: "Pendiente", priority: "Media", actualPrice: 0 },
     expense: { date: todayIso(), currency: "JPY", paymentStatus: "Pendiente", person: "Ambos" },
+    fund: { title: "Aportación", contributor: session.currentUser.name, date: todayIso(), currency: "JPY" },
     stay: { checkInTime: "15:00", checkOutTime: "11:00", paymentStatus: "Pendiente" },
     transport: { departureDate: activeDate(), arrivalDate: activeDate(), status: "Por reservar" },
     reservation: { date: activeDate(), status: "Pendiente", paymentStatus: "Pendiente" },
@@ -1562,6 +1741,18 @@ function bindRoute() {
     })
   );
   bindDrag();
+  app.querySelector("[data-add-fund]")?.addEventListener("click", () => openEditor("funds"));
+  if (ui.route === "map") {
+    initializeGoogleMap().catch((error) => {
+      console.error(error);
+      const canvas = document.querySelector("#google-map");
+      if (canvas) {
+        canvas.innerHTML = `<div class="map-message">${icon("alert")}<h3>No se pudo cargar Google Maps</h3><p>${
+          esc(error.message || "Revisa la clave y las APIs habilitadas.")
+        }</p></div>`;
+      }
+    });
+  }
   app.querySelector("#settings-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
@@ -1630,7 +1821,14 @@ function editTrip() {
     fields: [
       { name: "name", label: "Nombre", required: true },
       { name: "emoji", label: "Emoji", type: "select", options: TRIP_EMOJIS },
-      { name: "country", label: "País", type: "select", empty: "Selecciona un país", options: countryOptions() },
+      {
+        name: "country",
+        label: "País",
+        type: "autocomplete",
+        required: true,
+        placeholder: "Escribe para buscar un país",
+        options: countryOptions(),
+      },
       { name: "startDate", label: "Inicio", type: "date", required: true },
       { name: "endDate", label: "Fin", type: "date", required: true },
       { name: "travelers", label: "Viajeros", type: "number", min: 1 },

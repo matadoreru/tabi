@@ -11,13 +11,13 @@ import {
 } from "./auth.js";
 import { assertResourceInTrip, authorize, membership } from "./authorization.js";
 import { randomToken, sha256 } from "./crypto.js";
-import { ENTITY_TABLES } from "./config.js";
+import { CONFIG, ENTITY_TABLES } from "./config.js";
 import { body, HttpError, json, newId, now, validateMutationOrigin } from "./http.js";
 import { eventStream, publish } from "./events.js";
 import { PERMISSIONS, permissionsForRole } from "../src/permissions.js";
 
 const editPermission = (collection) =>
-  collection === "expenses"
+  collection === "expenses" || collection === "funds"
     ? PERMISSIONS.BUDGET_EDIT
     : collection === "documents"
     ? PERMISSIONS.DOCUMENT_UPLOAD
@@ -37,6 +37,13 @@ export async function api(request, pathname) {
 
   const user = await currentUser(request);
   if (parts[0] === "me" && request.method === "GET") return json({ user });
+  if (parts[0] === "config" && parts[1] === "maps" && request.method === "GET") {
+    return json({
+      enabled: Boolean(CONFIG.googleMapsApiKey && CONFIG.googleMapsMapId),
+      apiKey: CONFIG.googleMapsApiKey,
+      mapId: CONFIG.googleMapsMapId,
+    });
+  }
   if (parts[0] !== "trips") throw new HttpError(404, "NOT_FOUND", "Ruta no encontrada.");
   if (parts.length === 1) return tripCollectionRoutes(request, user);
 
@@ -634,6 +641,7 @@ function validateEntity(collection, data) {
     tasks: ["title"],
     purchases: ["product"],
     expenses: ["title"],
+    funds: ["title", "amount"],
     stays: ["name", "checkInDate", "checkOutDate"],
     transports: ["origin", "destination", "departureDate"],
     reservations: ["title", "date"],
@@ -645,10 +653,15 @@ function validateEntity(collection, data) {
   if (collection === "activities" && data.end <= data.start) {
     throw new HttpError(422, "INVALID_TIME", "La hora final debe ser posterior a la inicial.");
   }
-  for (const field of ["estimatedAmount", "actualAmount", "estimatedPrice", "actualPrice", "maxBudget", "price"]) {
+  for (
+    const field of ["amount", "estimatedAmount", "actualAmount", "estimatedPrice", "actualPrice", "maxBudget", "price"]
+  ) {
     if (data[field] !== undefined && (!Number.isFinite(Number(data[field])) || Number(data[field]) < 0)) {
       throw new HttpError(422, "INVALID_AMOUNT", "Los importes deben ser números positivos.");
     }
+  }
+  if (collection === "funds" && Number(data.amount) <= 0) {
+    throw new HttpError(422, "INVALID_AMOUNT", "La aportación debe ser mayor que cero.");
   }
 }
 function diff(before, after) {

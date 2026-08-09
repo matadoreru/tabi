@@ -8,6 +8,7 @@ const COLLECTIONS = [
   "tasks",
   "purchases",
   "expenses",
+  "funds",
   "stays",
   "transports",
   "reservations",
