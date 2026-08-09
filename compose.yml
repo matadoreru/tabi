@@ -5,11 +5,11 @@ services:
     image: ghcr.io/matadoreru/tabi:${TABI_IMAGE_TAG:-latest}
     container_name: tabi
     restart: unless-stopped
-    init: true
     environment:
       DENO_DIR: /tmp/deno-dir
       PORT: "4173"
       TABI_DATABASE_PATH: /app/data/tabi.sqlite
+      TABI_PUBLIC_ORIGIN: "${TABI_PUBLIC_ORIGIN:-}"
       TABI_SECURE_COOKIE: "${TABI_SECURE_COOKIE:-true}"
     ports:
       - "127.0.0.1:${TABI_HOST_PORT:-4173}:4173"
@@ -30,7 +30,6 @@ services:
         - CMD
         - deno
         - eval
-        - --allow-net=127.0.0.1:4173
         - "const response = await fetch('http://127.0.0.1:4173/api/health'); if (!response.ok) Deno.exit(1)"
       interval: 30s
       timeout: 5s

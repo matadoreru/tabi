@@ -1,5 +1,8 @@
+const configuredPublicOrigin = Deno.env.get("TABI_PUBLIC_ORIGIN")?.trim();
+
 export const CONFIG = Object.freeze({
   databasePath: Deno.env.get("TABI_DATABASE_PATH") || "./data/tabi.sqlite",
+  publicOrigin: configuredPublicOrigin ? new URL(configuredPublicOrigin).origin : "",
   sessionCookie: "tabi_session",
   sessionDays: 30,
   passwordIterations: 310_000,

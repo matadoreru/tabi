@@ -44,7 +44,8 @@ export function sessionCookie(token, maxAge) {
 export function validateMutationOrigin(request) {
   if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
   const origin = request.headers.get("origin");
-  if (origin && origin !== new URL(request.url).origin) {
+  const expectedOrigin = CONFIG.publicOrigin || new URL(request.url).origin;
+  if (origin && origin !== expectedOrigin) {
     throw new HttpError(403, "BAD_ORIGIN", "Origen de la petición no permitido.");
   }
   if (request.headers.get("sec-fetch-site") === "cross-site") {

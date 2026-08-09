@@ -1,5 +1,6 @@
 const testDatabase = `/tmp/tabi-test-${Deno.pid}-${Date.now()}.sqlite`;
 Deno.env.set("TABI_DATABASE_PATH", testDatabase);
+Deno.env.set("TABI_PUBLIC_ORIGIN", "https://tabi.example");
 
 const { api } = await import("./api.js");
 const { handleError } = await import("./http.js");
@@ -12,13 +13,13 @@ function assertEquals(actual, expected, message = "") {
   if (actual !== expected) throw new Error(message || `Esperado ${expected}; recibido ${actual}`);
 }
 
-async function call(method, path, payload, cookie = "") {
+async function call(method, path, payload, cookie = "", origin = "https://tabi.example") {
   const request = new Request(`http://local${path}`, {
     method,
     headers: {
       ...(payload ? { "content-type": "application/json" } : {}),
       ...(cookie ? { cookie } : {}),
-      origin: "http://local",
+      origin,
     },
     ...(payload ? { body: JSON.stringify(payload) } : {}),
   });
@@ -37,6 +38,20 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
+    const rejectedOrigin = await call(
+      "POST",
+      "/api/auth/register",
+      {
+        name: "Intruso",
+        username: "intruso",
+        email: "intruso@example.com",
+        password: "not relevant",
+      },
+      "",
+      "https://evil.example",
+    );
+    assertEquals(rejectedOrigin.status, 403, "Debe rechazar mutaciones desde un origen público distinto");
+
     const owner = await call("POST", "/api/auth/register", {
       name: "Hortensi",
       username: "hortensi",
