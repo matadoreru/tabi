@@ -1,0 +1,16 @@
+.git
+.github
+.agents
+.codex
+data
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+Dockerfile*
+compose*.yml
+DEPLOY.md
+README.md

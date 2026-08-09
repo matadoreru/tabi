@@ -1,0 +1,10 @@
+{
+  "name": "Tabi · Planificador de viajes",
+  "short_name": "Tabi",
+  "description": "Organiza itinerarios, lugares, reservas y presupuesto en un solo lugar.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f7f6f2",
+  "theme_color": "#e5484d",
+  "icons": [{ "src": "./assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
