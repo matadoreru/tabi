@@ -1986,7 +1986,7 @@ store.subscribe(() => applyTheme());
 applyTheme();
 await start();
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("./sw.js").catch(() => {});
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
 
 async function start() {
