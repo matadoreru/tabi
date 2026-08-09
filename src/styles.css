@@ -230,6 +230,7 @@ h3,
   gap: 9px;
 }
 .content {
+  min-width: 0;
   padding: 12px clamp(22px, 4vw, 56px) 54px;
   max-width: 1600px;
   margin: 0 auto;
@@ -787,11 +788,24 @@ textarea {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  scrollbar-width: none;
-  padding: 2px 1px 14px;
+  max-width: 100%;
+  padding: 2px 1px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted) transparent;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x;
+}
+.day-strip::-webkit-scrollbar {
+  height: 7px;
+}
+.day-strip::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 999px;
 }
 .day-button {
   flex: 0 0 66px;
+  scroll-snap-align: start;
   border: 1px solid var(--line);
   color: var(--muted);
   background: var(--surface);
@@ -816,6 +830,14 @@ textarea {
 }
 .day-button.active strong {
   color: #fff;
+}
+.itinerary-week-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  align-items: stretch;
+}
+.itinerary-week-grid > .card {
+  min-width: 0;
+  min-height: 260px;
 }
 .planner-layout {
   display: grid;

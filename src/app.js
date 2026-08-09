@@ -295,9 +295,11 @@ function layout(content) {
     DESCRIPTIONS[ui.route] || ""
   }</p></div><div class="top-actions"><button class="avatar-stack desktop-only" data-route="settings" aria-label="Miembros del viaje">${
     members.slice(0, 3).map((member) => avatar(member.user)).join("")
-  }${
-    members.length > 3 ? `<span class="avatar more">+${members.length - 3}</span>` : ""
-  }</button><button class="btn btn-secondary desktop-only" data-trip-list>Mis viajes</button><button class="btn btn-secondary icon-btn" data-theme-toggle aria-label="Cambiar tema">${
+  }${members.length > 3 ? `<span class="avatar more">+${members.length - 3}</span>` : ""}</button>${
+    session.can(PERMISSIONS.MEMBER_INVITE)
+      ? `<button class="btn btn-secondary" data-new-invite>${icon("users")} Compartir</button>`
+      : ""
+  }<button class="btn btn-secondary desktop-only" data-trip-list>Mis viajes</button><button class="btn btn-secondary icon-btn" data-theme-toggle aria-label="Cambiar tema">${
     icon(document.documentElement.dataset.theme === "dark" ? "sun" : "moon")
   }</button>${
     addable && session.can(requiredPermission)
@@ -455,6 +457,12 @@ function tripCard(trip) {
         icon("close")
       }</button>`
       : ""
+  }${
+    trip.role === "owner"
+      ? `<button class="btn btn-ghost icon-btn" data-delete-dashboard-trip="${trip.id}" title="Eliminar viaje" aria-label="Eliminar ${
+        esc(trip.name)
+      }">${icon("trash")}</button>`
+      : ""
   }</div></footer></article>`;
 }
 
@@ -481,6 +489,22 @@ function bindTripDashboard() {
       try {
         await apiClient.post(`/trips/${button.dataset.leaveTrip}/leave`);
         await session.loadTrips();
+        renderTripsDashboard();
+      } catch (error) {
+        toast(error.message, "error");
+      }
+    })
+  );
+  app.querySelectorAll("[data-delete-dashboard-trip]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      const trip = session.trips.find((item) => item.id === button.dataset.deleteDashboardTrip);
+      if (!confirm(`¿Eliminar “${trip?.name || "este viaje"}” definitivamente? Esta acción no se puede deshacer.`)) {
+        return;
+      }
+      try {
+        await apiClient.delete(`/trips/${button.dataset.deleteDashboardTrip}`);
+        await session.loadTrips();
+        toast("Viaje eliminado");
         renderTripsDashboard();
       } catch (error) {
         toast(error.message, "error");
@@ -761,7 +785,7 @@ function activityLogRow(log) {
     relativeTime(log.createdAt)
   }</small></div></div>`;
 }
-function miniTimeline(items) {
+function miniTimeline(items, showAction = true) {
   return items.length
     ? `<div class="timeline">${
       items.slice(0, 5).map((item) =>
@@ -777,7 +801,9 @@ function miniTimeline(items) {
     : emptyState(
       "Un día libre",
       "Aún no hay actividades. Déjalo para improvisar o añade un plan.",
-      `<button class="btn btn-primary" data-add="itinerary">${icon("plus")} Añadir actividad</button>`,
+      showAction
+        ? `<button class="btn btn-primary" data-add="itinerary">${icon("plus")} Añadir actividad</button>`
+        : "",
     );
 }
 function timeDiff(start, end) {
@@ -851,18 +877,18 @@ function renderItinerary() {
           index + 1
         }</h3><p>${fullDate(day)}</p></div>${
           badge(`${list.length} planes`, list.length > 7 ? "amber" : "green")
-        }</div>${miniTimeline(list.slice(0, 3))}</button>`;
+        }</div>${miniTimeline(list.slice(0, 3), false)}</button>`;
       }).join("")
     }</div>`;
   } else if (view === "week") {
     const index = dates.indexOf(date);
     const week = dates.slice(Math.floor(index / 7) * 7, Math.floor(index / 7) * 7 + 7);
-    body = `<div class="grid grid-3">${
+    body = `<div class="grid itinerary-week-grid">${
       week.map((day) =>
         `<button class="card card-pad" style="text-align:left;cursor:pointer;color:inherit" data-go-date="${day}"><div class="card-head"><div><h3>${
           fullDate(day)
         }</h3><p>${activitiesForDate(day).length} actividades</p></div></div>${
-          miniTimeline(activitiesForDate(day).slice(0, 4))
+          miniTimeline(activitiesForDate(day).slice(0, 4), false)
         }</button>`
       ).join("")
     }</div>`;
@@ -1417,13 +1443,11 @@ function bindCommon() {
   app.querySelectorAll("[data-route]").forEach((button) =>
     button.addEventListener("click", () => {
       const route = button.dataset.route;
-      location.hash = route;
-      if (location.hash.slice(1) === ui.route) {
-        ui.route = route;
-        ui.query = "";
-        ui.filter = "Todos";
-        render();
-      }
+      if (location.hash.slice(1) !== route) history.pushState({}, "", `#${route}`);
+      ui.route = route;
+      ui.query = "";
+      ui.filter = "Todos";
+      render();
     })
   );
   app.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
@@ -1493,6 +1517,21 @@ function bindRoute() {
       render();
     })
   );
+  const dayStrip = app.querySelector(".day-strip");
+  const activeDay = dayStrip?.querySelector(".day-button.active");
+  if (dayStrip && activeDay) {
+    dayStrip.scrollLeft = activeDay.offsetLeft - dayStrip.offsetLeft -
+      (dayStrip.clientWidth - activeDay.clientWidth) / 2;
+    dayStrip.addEventListener("wheel", (event) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      const maxScroll = dayStrip.scrollWidth - dayStrip.clientWidth;
+      const canMove = (event.deltaY < 0 && dayStrip.scrollLeft > 0) ||
+        (event.deltaY > 0 && dayStrip.scrollLeft < maxScroll);
+      if (!canMove) return;
+      event.preventDefault();
+      dayStrip.scrollLeft += event.deltaY;
+    }, { passive: false });
+  }
   app.querySelectorAll("[data-itinerary-view]").forEach((button) =>
     button.addEventListener("click", () => {
       ui.itineraryView = button.dataset.itineraryView;
@@ -1531,7 +1570,7 @@ function bindRoute() {
     render();
   });
   app.querySelector("[data-edit-trip]")?.addEventListener("click", editTrip);
-  app.querySelector("[data-new-invite]")?.addEventListener("click", createInvitation);
+  app.querySelectorAll("[data-new-invite]").forEach((button) => button.addEventListener("click", createInvitation));
   app.querySelectorAll("[data-member-role]").forEach((select) =>
     select.addEventListener("change", () => changeMemberRole(select.dataset.memberRole, select.value))
   );
