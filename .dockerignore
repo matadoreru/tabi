@@ -10,6 +10,7 @@ data
 *.sqlite-shm
 *.sqlite-wal
 *.log
+**/*.test.js
 Dockerfile*
 compose*.yml
 DEPLOY.md

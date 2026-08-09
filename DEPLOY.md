@@ -16,6 +16,10 @@ Cloudflare Tunnel
 No hay una fase de build web ni contenedores separados. La imagen ejecuta directamente `server.js` con Deno 2.9.4 como
 usuario no-root.
 
+El contenedor aplica además un sistema de archivos raíz de solo lectura, elimina todas las capacidades Linux, impide
+adquirir privilegios nuevos y limita tanto los procesos como el crecimiento de los logs. Solo el volumen `tabi_data` y
+el `tmpfs` efímero de `/tmp` admiten escritura.
+
 ## 1. Publicar la primera imagen
 
 Sube este repositorio a GitHub bajo `matadoreru/tabi` y asegúrate de que la rama principal se llama `main`:
