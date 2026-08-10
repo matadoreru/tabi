@@ -1,4 +1,4 @@
-const CACHE = "tabi-v5";
+const CACHE = "tabi-v6";
 const ASSETS = [
   "./",
   "./index.html",
