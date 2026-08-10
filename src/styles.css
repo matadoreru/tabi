@@ -1209,6 +1209,11 @@ textarea {
   font-size: 14px;
   line-height: 1.3;
 }
+.gm-style .gm-style-iw-chr,
+.gm-style .gm-style-iw-chr strong {
+  color: #191917 !important;
+  opacity: 1 !important;
+}
 .map-info-window p {
   margin: 0;
 }
