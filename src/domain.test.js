@@ -2,9 +2,12 @@ import {
   activityGoogleMapsUrl,
   budgetSummary,
   fundContributorOptions,
+  googleMapsLinkSearch,
   haversineKm,
+  inspirationLink,
   itineraryAnalysis,
   minutes,
+  sharedInspirationLink,
 } from "./domain.js";
 
 function assertEquals(actual, expected) {
@@ -37,6 +40,22 @@ Deno.test("usa las coordenadas del lugar guardado para abrir Google Maps", () =>
     activityGoogleMapsUrl({ placeId: "place-1" }, [{ id: "place-1", lat: 35.7148, lng: 139.7967 }]),
     "https://www.google.com/maps/search/?api=1&query=35.7148%2C139.7967",
   );
+});
+Deno.test("extrae la búsqueda y coordenadas de un enlace de Google Maps", () => {
+  const result = googleMapsLinkSearch("https://www.google.com/maps/place/Sens%C5%8D-ji/@35.7148,139.7967,17z");
+  assertEquals(result.query, "Sensō-ji");
+  assertEquals(result.lat, 35.7148);
+  assertEquals(result.lng, 139.7967);
+});
+Deno.test("reconoce enlaces de inspiración compatibles", () => {
+  assertEquals(inspirationLink("https://www.tiktok.com/@tabi/video/123")?.platform, "TikTok");
+  assertEquals(inspirationLink("https://www.instagram.com/reel/ABC123/")?.platform, "Instagram");
+  assertEquals(inspirationLink("https://youtube.com/shorts/ABC123")?.platform, "YouTube");
+  assertEquals(inspirationLink("https://example.com/video"), null);
+});
+Deno.test("extrae el enlace cuando Android lo comparte dentro del texto", () => {
+  const link = sharedInspirationLink("Mira este vídeo https://youtu.be/ABC123?si=example");
+  assertEquals(link?.url, "https://youtu.be/ABC123?si=example");
 });
 Deno.test("calcula presupuesto con compras realizadas", () => {
   const result = budgetSummary({ budget: 1000, travelers: 2 }, [{ actualAmount: 200, estimatedAmount: 300 }], [{

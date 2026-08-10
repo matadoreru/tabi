@@ -3,6 +3,15 @@
   "short_name": "Tabi",
   "description": "Organiza itinerarios, lugares, reservas y presupuesto en un solo lugar.",
   "start_url": "./",
+  "share_target": {
+    "action": "/share",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
   "display": "standalone",
   "background_color": "#f7f6f2",
   "theme_color": "#e5484d",

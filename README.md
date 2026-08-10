@@ -1,3 +1,11 @@
+# Actualizar Docker
+
+```bash
+docker compose pull app
+docker compose up -d app
+docker compose ps
+```
+
 # Tabi · planificador colaborativo de viajes
 
 Aplicación web multiusuario para organizar itinerarios, lugares, tareas, compras, presupuesto, alojamientos, transporte,

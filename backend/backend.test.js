@@ -7,6 +7,7 @@ Deno.env.delete("TABI_GOOGLE_MAPS_MAP_ID");
 const { api } = await import("./api.js");
 const { handleError } = await import("./http.js");
 const { db } = await import("./database.js");
+const { googleMapsUrl, resolveGoogleMapsUrl } = await import("./google-maps.js");
 
 function assert(condition, message = "Assertion failed") {
   if (!condition) throw new Error(message);
@@ -14,6 +15,32 @@ function assert(condition, message = "Assertion failed") {
 function assertEquals(actual, expected, message = "") {
   if (actual !== expected) throw new Error(message || `Esperado ${expected}; recibido ${actual}`);
 }
+
+Deno.test("valida y resuelve enlaces cortos de Google Maps sin aceptar redirecciones externas", async () => {
+  assert(googleMapsUrl("https://www.google.es/maps/place/Madrid"));
+  assertEquals(googleMapsUrl("https://example.com/maps/place/Madrid"), null);
+  const resolved = await resolveGoogleMapsUrl(
+    "https://maps.app.goo.gl/example",
+    () =>
+      Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://www.google.com/maps/place/Madrid/@40.4168,-3.7038,15z" },
+        }),
+      ),
+  );
+  assertEquals(resolved, "https://www.google.com/maps/place/Madrid/@40.4168,-3.7038,15z");
+  let rejected = false;
+  try {
+    await resolveGoogleMapsUrl(
+      "https://maps.app.goo.gl/example",
+      () => Promise.resolve(new Response(null, { status: 302, headers: { location: "https://evil.example/" } })),
+    );
+  } catch (error) {
+    rejected = error.code === "INVALID_MAPS_URL";
+  }
+  assert(rejected, "Debe rechazar redirecciones fuera de Google Maps");
+});
 
 async function call(method, path, payload, cookie = "", origin = "https://tabi.example") {
   const request = new Request(`http://local${path}`, {
@@ -91,6 +118,33 @@ Deno.test({
     );
     assertEquals(place.status, 201);
     assertEquals(place.data.item.version, 1);
+    const inspiration = await call(
+      "POST",
+      `/api/trips/${tripId}/inspirations`,
+      { url: "https://www.instagram.com/reel/ABC123/" },
+      owner.cookie,
+    );
+    assertEquals(inspiration.status, 201);
+    assertEquals(inspiration.data.item.url, "https://www.instagram.com/reel/ABC123/");
+    assertEquals(
+      db.prepare("SELECT data FROM inspirations WHERE id=?").get(inspiration.data.item.id).data,
+      '{"url":"https://www.instagram.com/reel/ABC123/"}',
+      "La inspiración solo debe guardar el enlace",
+    );
+    const duplicateInspiration = await call(
+      "POST",
+      `/api/trips/${tripId}/inspirations`,
+      { url: "https://www.instagram.com/reel/ABC123/" },
+      owner.cookie,
+    );
+    assertEquals(duplicateInspiration.status, 409);
+    const invalidInspiration = await call(
+      "POST",
+      `/api/trips/${tripId}/inspirations`,
+      { url: "https://example.com/video" },
+      owner.cookie,
+    );
+    assertEquals(invalidInspiration.status, 422);
     const fund = await call("POST", `/api/trips/${tripId}/funds`, {
       title: "Fondo inicial",
       contributor: "Hortensi",

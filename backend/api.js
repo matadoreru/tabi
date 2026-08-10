@@ -14,7 +14,9 @@ import { randomToken, sha256 } from "./crypto.js";
 import { CONFIG, ENTITY_TABLES } from "./config.js";
 import { body, HttpError, json, newId, now, validateMutationOrigin } from "./http.js";
 import { eventStream, publish } from "./events.js";
+import { resolveGoogleMapsUrl } from "./google-maps.js";
 import { PERMISSIONS, permissionsForRole } from "../src/permissions.js";
+import { inspirationLink } from "../src/domain.js";
 
 const editPermission = (collection) =>
   collection === "expenses" || collection === "funds"
@@ -43,6 +45,10 @@ export async function api(request, pathname) {
       apiKey: CONFIG.googleMapsApiKey,
       mapId: CONFIG.googleMapsMapId,
     });
+  }
+  if (parts[0] === "maps" && parts[1] === "resolve" && request.method === "POST") {
+    const input = await body(request);
+    return json({ url: await resolveGoogleMapsUrl(input.url) });
   }
   if (parts[0] !== "trips") throw new HttpError(404, "NOT_FOUND", "Ruta no encontrada.");
   if (parts.length === 1) return tripCollectionRoutes(request, user);
@@ -220,6 +226,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     const entityId = newId(collection.slice(0, 3));
     const data = cleanEntity(input);
     validateEntity(collection, data);
+    if (collection === "inspirations") assertUniqueInspiration(tripId, data.url);
     const title = entityTitle(collection, data);
     db.prepare(
       `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
@@ -239,6 +246,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     delete data.id;
     delete data.tripId;
     validateEntity(collection, data);
+    if (collection === "inspirations") assertUniqueInspiration(tripId, data.url, id);
     const result = db.prepare(
       `UPDATE ${table} SET data=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND trip_id=? AND version=?`,
     )
@@ -606,8 +614,15 @@ function emit(tripId, user, action, collection, entityId) {
   publish(tripId, { action, collection, entityId, user: { id: user.id, name: user.name }, at: now() });
 }
 function entityTitle(collection, item) {
-  return item.title || item.name || item.product || ({ expenses: "Gasto", documents: "Documento" })[collection] ||
-    "Elemento";
+  return item.title || item.name || item.product ||
+    ({ expenses: "Gasto", documents: "Documento", inspirations: "Inspiración" })[collection] || "Elemento";
+}
+
+function assertUniqueInspiration(tripId, url, excludedId = "") {
+  const duplicate = db.prepare(
+    "SELECT id FROM inspirations WHERE trip_id=? AND json_extract(data, '$.url')=? AND id<>?",
+  ).get(tripId, url, excludedId);
+  if (duplicate) throw new HttpError(409, "INSPIRATION_EXISTS", "Este enlace ya está guardado en el viaje.");
 }
 function conflict(currentVersion) {
   throw new HttpError(
@@ -646,12 +661,27 @@ function validateEntity(collection, data) {
     transports: ["origin", "destination", "departureDate"],
     reservations: ["title", "date"],
     documents: ["name"],
+    inspirations: ["url"],
   }[collection] || [];
   if (required.some((field) => !String(data[field] || "").trim())) {
     throw new HttpError(422, "MISSING_FIELDS", "Faltan campos obligatorios.");
   }
   if (collection === "activities" && data.end <= data.start) {
     throw new HttpError(422, "INVALID_TIME", "La hora final debe ser posterior a la inicial.");
+  }
+  if (collection === "inspirations") {
+    if (Object.keys(data).some((field) => field !== "url")) {
+      throw new HttpError(422, "INVALID_INSPIRATION", "Las inspiraciones solo pueden guardar el enlace.");
+    }
+    const link = inspirationLink(data.url);
+    if (!link) {
+      throw new HttpError(
+        422,
+        "INVALID_INSPIRATION_URL",
+        "El enlace debe ser un vídeo de TikTok, Instagram o YouTube.",
+      );
+    }
+    data.url = link.url;
   }
   for (
     const field of ["amount", "estimatedAmount", "actualAmount", "estimatedPrice", "actualPrice", "maxBudget", "price"]

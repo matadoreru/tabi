@@ -46,6 +46,59 @@ export function activityGoogleMapsUrl(activity, places = []) {
   return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : "";
 }
 
+export function googleMapsLinkSearch(value) {
+  try {
+    const url = new URL(value);
+    const placeIndex = url.pathname.split("/").indexOf("place");
+    const pathQuery = placeIndex >= 0 ? decodeURIComponent(url.pathname.split("/")[placeIndex + 1] || "") : "";
+    const coordinateMatch = url.pathname.match(/\/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+    return {
+      placeId: url.searchParams.get("query_place_id") || "",
+      query: url.searchParams.get("query") || url.searchParams.get("q") || pathQuery.replaceAll("+", " "),
+      lat: coordinateMatch ? Number(coordinateMatch[1]) : null,
+      lng: coordinateMatch ? Number(coordinateMatch[2]) : null,
+    };
+  } catch {
+    return { placeId: "", query: "", lat: null, lng: null };
+  }
+}
+
+export function inspirationLink(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    if (url.protocol !== "https:") return null;
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (host === "tiktok.com" || host.endsWith(".tiktok.com")) {
+      return { url: url.href, platform: "TikTok", key: "tiktok" };
+    }
+    if ((host === "instagram.com" || host.endsWith(".instagram.com")) && /^\/(?:reel|reels|p)\//.test(url.pathname)) {
+      return { url: url.href, platform: "Instagram", key: "instagram" };
+    }
+    if (host === "youtu.be" && url.pathname.length > 1) {
+      return { url: url.href, platform: "YouTube", key: "youtube" };
+    }
+    if (host === "youtube.com" || host.endsWith(".youtube.com")) {
+      const video = url.pathname === "/watch" && url.searchParams.has("v");
+      const short = /^\/shorts\/[^/]+/.test(url.pathname);
+      if (video || short) return { url: url.href, platform: "YouTube", key: "youtube" };
+    }
+  } catch {
+    // Los textos compartidos pueden no contener una URL válida.
+  }
+  return null;
+}
+
+export function sharedInspirationLink(...values) {
+  for (const value of values) {
+    const matches = String(value || "").match(/https?:\/\/[^\s<>]+/g) || [];
+    for (const match of matches) {
+      const link = inspirationLink(match.replace(/[),.!?\]}]+$/g, ""));
+      if (link) return link;
+    }
+  }
+  return null;
+}
+
 export function budgetSummary(trip, expenses, purchases = [], funds = []) {
   const spent = expenses.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0) +
     purchases.filter((item) => item.status === "Comprado").reduce(

@@ -83,6 +83,10 @@ const migrations = [
   CREATE TABLE funds(id TEXT PRIMARY KEY, trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT REFERENCES users(id) ON DELETE SET NULL, updated_by TEXT REFERENCES users(id) ON DELETE SET NULL);
   CREATE INDEX idx_funds_trip ON funds(trip_id, updated_at DESC);
   `,
+  `
+  CREATE TABLE inspirations(id TEXT PRIMARY KEY, trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT REFERENCES users(id) ON DELETE SET NULL, updated_by TEXT REFERENCES users(id) ON DELETE SET NULL);
+  CREATE INDEX idx_inspirations_trip ON inspirations(trip_id, updated_at DESC);
+  `,
 ];
 
 export function migrate() {

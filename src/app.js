@@ -6,8 +6,11 @@ import {
   dateRange,
   durationLabel,
   fundContributorOptions,
+  googleMapsLinkSearch,
   groupTotals,
+  inspirationLink,
   itineraryAnalysis,
+  sharedInspirationLink,
 } from "./domain.js";
 import { Store } from "./store.js";
 import { badge, emptyState, esc, formatDate, formatMoney, fullDate, icon, modal, toast } from "./ui.js";
@@ -39,6 +42,7 @@ const NAV = [
   ["stays", "Hospedaje", "bed"],
   ["transport", "Transporte", "train"],
   ["reservations", "Reservas", "ticket"],
+  ["inspiration", "Inspiración", "play"],
   ["documents", "Documentos", "file"],
   ["settings", "Configuración", "settings"],
 ];
@@ -54,6 +58,7 @@ const DESCRIPTIONS = {
   stays: "Tus alojamientos y check-ins",
   transport: "Todos tus trayectos, conectados",
   reservations: "Referencias y horarios siempre a mano",
+  inspiration: "Vídeos e ideas que quieres recordar para este viaje",
   documents: "Enlaces y documentos importantes",
   settings: "Personaliza el viaje y protege tus datos",
 };
@@ -110,7 +115,14 @@ const fields = {
     { name: "duration", label: "Duración recomendada (min)", type: "number", min: 0 },
     { name: "priority", label: "Prioridad", type: "select", options: ["Imprescindible", "Alta", "Media", "Baja"] },
     { name: "assignedDate", label: "Día asignado", type: "date" },
-    { name: "link", label: "Enlace", type: "url" },
+    {
+      name: "link",
+      label: "Enlace de Google Maps",
+      type: "url",
+      placeholder: "https://maps.app.goo.gl/…",
+      help: "Pega un enlace y pulsa Obtener datos para completar el lugar automáticamente.",
+      full: true,
+    },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
   task: [
@@ -235,6 +247,17 @@ const fields = {
     },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
+  inspiration: [
+    {
+      name: "url",
+      label: "Enlace del vídeo",
+      type: "url",
+      required: true,
+      placeholder: "https://www.tiktok.com/…",
+      help: "Admite TikTok, Instagram Reels, YouTube Shorts y vídeos de YouTube.",
+      full: true,
+    },
+  ],
 };
 
 function resolvedFields(type, values = {}) {
@@ -313,6 +336,7 @@ function layout(content) {
     stays: "Alojamiento",
     transport: "Transporte",
     reservations: "Reserva",
+    inspiration: "Inspiración",
     documents: "Documento",
   }[ui.route];
   const requiredPermission = ui.route === "budget"
@@ -366,6 +390,7 @@ function render() {
     stays: renderStays,
     transport: renderTransport,
     reservations: renderReservations,
+    inspiration: renderInspiration,
     documents: renderDocuments,
     settings: renderSettings,
     more: renderMore,
@@ -428,6 +453,7 @@ function bindAuth() {
       ui.authMode === "register" ? await session.register(values) : await session.login(values);
       ui.busy = false;
       if (inviteTokenFromPath()) await renderInvitation();
+      else if (shareTargetFromPath()) await renderShareTarget();
       else renderTripsDashboard();
     } catch (error) {
       ui.busy = false;
@@ -585,14 +611,14 @@ function createTrip() {
   });
 }
 
-async function enterTrip(tripId) {
+async function enterTrip(tripId, route = "dashboard") {
   renderLoading("Cargando el viaje…");
   try {
     const payload = await store.loadTrip(tripId, handleRemoteChange);
     session.selectTrip(payload);
     ui.selectedDate = "";
-    ui.route = "dashboard";
-    location.hash = "dashboard";
+    ui.route = route;
+    location.hash = route;
     render();
   } catch (error) {
     toast(error.message, "error");
@@ -624,6 +650,66 @@ async function performLogout() {
 function inviteTokenFromPath() {
   const match = location.pathname.match(/^\/invite\/([A-Za-z0-9_-]+)$/);
   return match?.[1] || "";
+}
+
+function shareTargetFromPath() {
+  return location.pathname === "/share";
+}
+
+function incomingInspiration() {
+  const params = new URLSearchParams(location.search);
+  return sharedInspirationLink(params.get("url"), params.get("text"), params.get("title"));
+}
+
+function renderShareTarget() {
+  applyTheme();
+  if (!session.currentUser) return renderAuth();
+  const link = incomingInspiration();
+  const trips = session.trips.filter((trip) => trip.role !== "viewer");
+  const finish = () => {
+    history.replaceState({}, "", "/");
+    renderTripsDashboard();
+  };
+  app.innerHTML =
+    `<main class="auth-shell share-shell"><section class="auth-card card"><div class="brand"><span class="brand-mark">旅</span><span>Tabi<small>Inspiración</small></span></div>${
+      link
+        ? `<div><span class="hero-eyebrow" style="color:var(--primary)">Enlace recibido</span><h1>Guardar en un viaje</h1><p>Elige dónde quieres guardar este vídeo de ${
+          esc(link.platform)
+        }.</p></div><div class="shared-link-preview"><span class="inspiration-source ${link.key}">${
+          icon("play")
+        }</span><div><strong>${esc(link.platform)}</strong><small>${
+          esc(new URL(link.url).hostname.replace(/^www\./, ""))
+        }</small></div></div>${
+          trips.length
+            ? `<form id="share-target-form" class="form-grid"><div class="field full"><label for="share-trip">Viaje</label><select id="share-trip" name="tripId" required>${
+              trips.map((trip) => `<option value="${esc(trip.id)}">${esc(`${trip.emoji} ${trip.name}`)}</option>`).join(
+                "",
+              )
+            }</select></div><div class="field full"><button class="btn btn-primary" type="submit">${
+              icon("plus")
+            } Guardar en Inspiración</button></div></form>`
+            : `<div class="insight warning">${
+              icon("alert")
+            }<div><strong>No tienes viajes editables</strong>Crea un viaje o pide permiso de edición para guardar el enlace.</div></div>`
+        }`
+        : `<div><span class="hero-eyebrow" style="color:var(--primary)">Enlace no compatible</span><h1>No se puede guardar este contenido</h1><p>Comparte un vídeo de TikTok, Instagram Reels, YouTube Shorts o YouTube.</p></div>`
+    }<button class="btn btn-secondary" type="button" data-cancel-share>Cancelar</button></section><aside class="auth-art"><div><h2>Una idea compartida puede convertirse en el mejor plan del viaje.</h2></div></aside></main>`;
+  app.querySelector("[data-cancel-share]")?.addEventListener("click", finish);
+  app.querySelector("#share-target-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('[type="submit"]');
+    button.disabled = true;
+    const { tripId } = Object.fromEntries(new FormData(event.currentTarget));
+    try {
+      await apiClient.post(`/trips/${tripId}/inspirations`, { url: link.url });
+      history.replaceState({}, "", "/");
+      await enterTrip(tripId, "inspiration");
+      toast("Enlace guardado en Inspiración");
+    } catch (error) {
+      button.disabled = false;
+      toast(error.message || "No se ha podido guardar el enlace.", "error");
+    }
+  });
 }
 
 async function renderInvitation() {
@@ -1084,6 +1170,94 @@ function googlePlaceCity(place) {
   return component?.longText || component?.long_name || "Sin especificar";
 }
 
+async function googlePlaceFromLink(value) {
+  const resolved = (await apiClient.post("/maps/resolve", { url: value })).url;
+  const config = await apiClient.get("/config/maps");
+  if (!config.enabled) throw new Error("Configura Google Maps en el servidor para obtener los datos del lugar.");
+  await loadGoogleMaps(config.apiKey);
+  const { Place } = await google.maps.importLibrary("places");
+  const search = googleMapsLinkSearch(resolved);
+  let place;
+  if (search.placeId) {
+    place = new Place({ id: search.placeId });
+    await place.fetchFields({
+      fields: [
+        "id",
+        "displayName",
+        "formattedAddress",
+        "location",
+        "googleMapsURI",
+        "addressComponents",
+        "primaryType",
+        "regularOpeningHours",
+      ],
+    });
+  } else {
+    const textQuery = search.query ||
+      (Number.isFinite(search.lat) && Number.isFinite(search.lng) ? `${search.lat},${search.lng}` : "");
+    if (!textQuery) throw new Error("No se ha podido identificar el lugar incluido en el enlace.");
+    const result = await Place.searchByText({
+      textQuery,
+      fields: [
+        "id",
+        "displayName",
+        "formattedAddress",
+        "location",
+        "googleMapsURI",
+        "addressComponents",
+        "primaryType",
+        "regularOpeningHours",
+      ],
+      maxResultCount: 1,
+      language: "es",
+    });
+    place = result.places?.[0];
+  }
+  if (!place?.location) throw new Error("Google Maps no ha encontrado información para ese enlace.");
+  return { place, resolved };
+}
+
+function initializePlaceLinkImport(root) {
+  const input = root.querySelector("#field-link");
+  if (!input) return;
+  input.insertAdjacentHTML(
+    "afterend",
+    `<button class="btn btn-secondary" type="button" data-import-google-link>${
+      icon("map")
+    } Obtener datos del enlace</button>`,
+  );
+  const button = root.querySelector("[data-import-google-link]");
+  button.addEventListener("click", async () => {
+    if (!input.reportValidity() || !input.value) return;
+    button.disabled = true;
+    const previousLabel = button.innerHTML;
+    button.textContent = "Consultando Google Maps…";
+    try {
+      const { place, resolved } = await googlePlaceFromLink(input.value);
+      const values = {
+        name: place.displayName || "",
+        city: googlePlaceCity(place),
+        address: place.formattedAddress || "",
+        category: googlePlaceCategory(place.primaryType),
+        hours: place.regularOpeningHours?.weekdayDescriptions?.join(" · ") || "",
+        lat: place.location.lat(),
+        lng: place.location.lng(),
+        link: place.googleMapsURI || resolved,
+      };
+      Object.entries(values).forEach(([name, value]) => {
+        const field = root.querySelector(`#field-${name}`);
+        if (field) field.value = value;
+      });
+      toast("Datos del lugar completados");
+    } catch (error) {
+      toast(error.message || "No se han podido obtener los datos del enlace.", "error");
+    } finally {
+      button.disabled = false;
+      button.innerHTML = previousLabel;
+    }
+  });
+}
+
 async function initializeGoogleMap() {
   const canvas = document.querySelector("#google-map");
   const searchHost = document.querySelector("#google-place-search");
@@ -1442,6 +1616,45 @@ function renderReservations() {
     )
   }`;
 }
+function renderInspiration() {
+  const enriched = store.collection("inspirations").map((item) => ({
+    ...item,
+    platform: inspirationLink(item.url)?.platform || "",
+  }));
+  const items = [...filtered(enriched, ["url", "platform"])].reverse();
+  return `<div class="insight inspiration-help" style="margin-bottom:18px">${
+    icon("play")
+  }<div><strong>Guarda ideas desde tus redes</strong>En Android, instala Tabi y utiliza Compartir → Tabi para elegir el viaje. En iOS esta función automática no está disponible: copia el enlace y añádelo manualmente aquí.</div></div>${
+    toolbar(["Todos", "TikTok", "Instagram", "YouTube"])
+  }<div class="grid grid-3 inspiration-grid">${
+    items.map((item) => {
+      const link = inspirationLink(item.url);
+      if (!link) return "";
+      return `<article class="card inspiration-card"><div class="inspiration-cover ${link.key}"><span>${
+        icon("play")
+      }</span><strong>${esc(link.platform)}</strong></div><div class="inspiration-body"><div>${
+        badge(link.platform)
+      }<span class="cell-sub">Guardado ${formatDate(item.createdAt)}</span></div><p>${
+        esc(new URL(link.url).hostname.replace(/^www\./, ""))
+      }</p><div class="place-meta"><a class="btn btn-primary" href="${
+        esc(link.url)
+      }" target="_blank" rel="noreferrer">${icon("external")} Ver en ${esc(link.platform)}</a>${
+        session.can(PERMISSIONS.TRIP_EDIT)
+          ? `<button class="btn btn-ghost icon-btn" data-edit="inspirations:${item.id}" aria-label="Editar enlace">${
+            icon("edit")
+          }</button>`
+          : ""
+      }</div></div></article>`;
+    }).join("") ||
+    emptyState(
+      "Aún no hay inspiración",
+      "Guarda vídeos con ideas de lugares, comidas o planes para el viaje.",
+      session.can(PERMISSIONS.TRIP_EDIT)
+        ? `<button class="btn btn-primary" data-add="inspiration">${icon("plus")} Añadir enlace</button>`
+        : "",
+    )
+  }</div>`;
+}
 function renderDocuments() {
   const items = filtered(store.collection("documents"), ["name", "type", "reference"]);
   return `<div class="insight warning" style="margin-bottom:18px">${
@@ -1601,6 +1814,7 @@ function openEditor(collection, idValue) {
     stays: ["stay", "Alojamiento"],
     transports: ["transport", "Transporte"],
     reservations: ["reservation", "Reserva"],
+    inspirations: ["inspiration", "Inspiración"],
     documents: ["document", "Documento"],
   }[collection];
   if (!config) return;
@@ -1616,6 +1830,7 @@ function openEditor(collection, idValue) {
     stay: { checkInTime: "15:00", checkOutTime: "11:00", paymentStatus: "Pendiente" },
     transport: { departureDate: activeDate(), arrivalDate: activeDate(), status: "Por reservar" },
     reservation: { date: activeDate(), status: "Pendiente", paymentStatus: "Pendiente" },
+    inspiration: {},
     document: { type: "Confirmación" },
   }[type] || {};
   modal({
@@ -1640,6 +1855,7 @@ function openEditor(collection, idValue) {
       toast(item ? "Cambios guardados" : "Elemento añadido");
       render();
     },
+    onReady: type === "place" ? initializePlaceLinkImport : undefined,
     onDanger: item
       ? async () => {
         await store.remove(collection, item.id);
@@ -1698,6 +1914,7 @@ function bindCommon() {
         stays: "stays",
         transport: "transports",
         reservations: "reservations",
+        inspiration: "inspirations",
         documents: "documents",
       };
       openEditor(map[button.dataset.add]);
@@ -2028,6 +2245,7 @@ async function start() {
   renderLoading();
   await session.restore();
   if (inviteTokenFromPath()) return renderInvitation();
+  if (shareTargetFromPath()) return renderShareTarget();
   if (!session.currentUser) return renderAuth();
   renderTripsDashboard();
 }

@@ -34,6 +34,7 @@ const paths = {
   users:
     '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
   plane: '<path d="M22 2 9 15M22 2l-6 20-4-9-9-4Z"/>',
+  play: '<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4V8Z"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   close: '<path d="M18 6 6 18M6 6l12 12"/>',
 };
@@ -72,7 +73,16 @@ export const statusTone = (status = "") =>
     : "blue";
 export const badge = (label, tone) => `<span class="badge ${tone || statusTone(label)}">${esc(label)}</span>`;
 
-export function modal({ title, fields, submitLabel = "Guardar", dangerLabel = "", values = {}, onSubmit, onDanger }) {
+export function modal({
+  title,
+  fields,
+  submitLabel = "Guardar",
+  dangerLabel = "",
+  values = {},
+  onSubmit,
+  onDanger,
+  onReady,
+}) {
   const root = document.querySelector("#modal-root");
   const fieldHtml = fields.map((field) => {
     const value = values[field.name] ?? field.value ?? "";
@@ -234,6 +244,7 @@ export function modal({ title, fields, submitLabel = "Guardar", dangerLabel = ""
       }
     });
   }
+  onReady?.(root);
   setTimeout(() => root.querySelector("input, select, textarea")?.focus(), 0);
 }
 

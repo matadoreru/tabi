@@ -23,4 +23,5 @@ export const ENTITY_TABLES = Object.freeze({
   transports: "transports",
   reservations: "reservations",
   documents: "documents",
+  inspirations: "inspirations",
 });

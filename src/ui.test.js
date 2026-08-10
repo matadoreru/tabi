@@ -11,6 +11,14 @@ Deno.test("las rutas de recursos funcionan desde enlaces profundos", async () =>
   }
 });
 
+Deno.test("la PWA se registra como destino para enlaces compartidos", async () => {
+  const manifest = JSON.parse(await Deno.readTextFile(new URL("../manifest.webmanifest", import.meta.url)));
+  assertEquals(manifest.share_target.action, "/share");
+  assertEquals(manifest.share_target.method, "GET");
+  assertEquals(manifest.share_target.params.url, "url");
+  assertEquals(manifest.share_target.params.text, "text");
+});
+
 Deno.test("normaliza búsquedas sin distinguir mayúsculas ni tildes", () => {
   assertEquals(searchKey("  JAPÓN "), "japon");
   assertEquals(searchKey("España"), "espana");

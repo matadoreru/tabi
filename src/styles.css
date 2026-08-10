@@ -739,6 +739,83 @@ textarea {
   box-shadow: none;
   transition: transform .18s, box-shadow .18s;
 }
+.inspiration-card {
+  overflow: hidden;
+}
+.inspiration-cover {
+  min-height: 150px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, #34343a, #111);
+}
+.inspiration-cover.instagram {
+  background: linear-gradient(135deg, #833ab4, #fd1d1d 55%, #fcb045);
+}
+.inspiration-cover.youtube {
+  background: linear-gradient(135deg, #ff3030, #b50000);
+}
+.inspiration-cover .icon {
+  width: 42px;
+  height: 42px;
+}
+.inspiration-cover strong {
+  font-size: 20px;
+}
+.inspiration-body {
+  padding: 18px;
+}
+.inspiration-body > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.inspiration-body p {
+  margin: 14px 0;
+  color: var(--muted);
+}
+.inspiration-help {
+  background: var(--accent-soft);
+  box-shadow: none;
+}
+.shared-link-preview {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.shared-link-preview strong,
+.shared-link-preview small {
+  display: block;
+}
+.shared-link-preview small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+.inspiration-source {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 13px;
+  color: #fff;
+  background: #17171a;
+}
+.inspiration-source.instagram {
+  background: linear-gradient(135deg, #833ab4, #fd1d1d 55%, #fcb045);
+}
+.inspiration-source.youtube {
+  background: #d90000;
+}
 .place-card:hover {
   transform: translateY(-3px);
   box-shadow: var(--shadow);
