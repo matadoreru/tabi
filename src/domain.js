@@ -29,6 +29,23 @@ export function itineraryAnalysis(activities) {
   return { sorted, conflicts, gaps, plannedMinutes, warnings };
 }
 
+export function activityGoogleMapsUrl(activity, places = []) {
+  if (/^https?:\/\//i.test(activity.mapsUrl || "")) return activity.mapsUrl;
+  const place = places.find(({ id }) => id === activity.placeId);
+  if (
+    /^https?:\/\/(?:www\.)?google\.[^/]+\/maps\//i.test(place?.link || "") ||
+    /^https?:\/\/maps\.app\.goo\.gl\//i.test(place?.link || "")
+  ) {
+    return place.link;
+  }
+  const hasCoordinates = place && place.lat !== "" && place.lat != null && place.lng !== "" && place.lng != null &&
+    Number.isFinite(Number(place.lat)) && Number.isFinite(Number(place.lng));
+  const query = hasCoordinates
+    ? `${place.lat},${place.lng}`
+    : [activity.location, activity.city].filter(Boolean).join(", ");
+  return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : "";
+}
+
 export function budgetSummary(trip, expenses, purchases = [], funds = []) {
   const spent = expenses.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0) +
     purchases.filter((item) => item.status === "Comprado").reduce(
@@ -55,6 +72,19 @@ export function budgetSummary(trip, expenses, purchases = [], funds = []) {
     projected: spent + committed + shoppingPlanned,
     perPerson: spent / Math.max(1, Number(trip?.travelers || 1)),
   };
+}
+
+export function fundContributorOptions(members = [], currentContributor = "") {
+  const options = members.map(({ user }) => ({
+    value: user.name,
+    label: user.username ? `${user.name} (@${user.username})` : user.name,
+  }));
+  const knownContributor = options.some(({ value }) => value === currentContributor) || currentContributor === "Otros";
+  if (currentContributor && !knownContributor) {
+    options.push({ value: currentContributor, label: `${currentContributor} (guardado)` });
+  }
+  options.push({ value: "Otros", label: "Otros" });
+  return options;
 }
 
 export function groupTotals(items, key, amountKey = "actualAmount") {

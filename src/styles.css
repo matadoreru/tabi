@@ -1212,6 +1212,9 @@ textarea {
   text-align: left;
   cursor: pointer;
 }
+.autocomplete-options button[hidden] {
+  display: none;
+}
 .autocomplete-options button:hover,
 .autocomplete-options button.active {
   color: var(--primary);

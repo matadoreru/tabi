@@ -1,4 +1,11 @@
-import { budgetSummary, haversineKm, itineraryAnalysis, minutes } from "./domain.js";
+import {
+  activityGoogleMapsUrl,
+  budgetSummary,
+  fundContributorOptions,
+  haversineKm,
+  itineraryAnalysis,
+  minutes,
+} from "./domain.js";
 
 function assertEquals(actual, expected) {
   if (actual !== expected) throw new Error(`Esperado ${expected}; recibido ${actual}`);
@@ -19,6 +26,18 @@ Deno.test("detecta actividades solapadas", () => {
   }]);
   assertEquals(result.conflicts[0].overlap, 30);
 });
+Deno.test("crea una búsqueda de Google Maps para el lugar de una actividad", () => {
+  assertEquals(
+    activityGoogleMapsUrl({ location: "Sensō-ji", city: "Tokio" }),
+    "https://www.google.com/maps/search/?api=1&query=Sens%C5%8D-ji%2C%20Tokio",
+  );
+});
+Deno.test("usa las coordenadas del lugar guardado para abrir Google Maps", () => {
+  assertEquals(
+    activityGoogleMapsUrl({ placeId: "place-1" }, [{ id: "place-1", lat: 35.7148, lng: 139.7967 }]),
+    "https://www.google.com/maps/search/?api=1&query=35.7148%2C139.7967",
+  );
+});
 Deno.test("calcula presupuesto con compras realizadas", () => {
   const result = budgetSummary({ budget: 1000, travelers: 2 }, [{ actualAmount: 200, estimatedAmount: 300 }], [{
     status: "Comprado",
@@ -33,6 +52,25 @@ Deno.test("suma fondos aportados al presupuesto base", () => {
   assertEquals(result.budget, 1500);
   assertEquals(result.funded, 500);
   assertEquals(result.remaining, 1300);
+});
+Deno.test("ofrece los miembros del viaje y Otros como aportantes", () => {
+  const options = fundContributorOptions([
+    { user: { name: "Ana", username: "ana" } },
+    { user: { name: "Luis", username: "luis" } },
+  ]);
+  assertEquals(
+    JSON.stringify(options),
+    JSON.stringify([
+      { value: "Ana", label: "Ana (@ana)" },
+      { value: "Luis", label: "Luis (@luis)" },
+      { value: "Otros", label: "Otros" },
+    ]),
+  );
+});
+Deno.test("conserva un aportante antiguo al editar", () => {
+  const options = fundContributorOptions([{ user: { name: "Ana", username: "ana" } }], "Invitado");
+  assertEquals(options[1].value, "Invitado");
+  assertEquals(options[2].value, "Otros");
 });
 Deno.test("calcula distancia geográfica", () =>
   assertAlmostEquals(haversineKm({ lat: 35.7148, lng: 139.7967 }, { lat: 35.7101, lng: 139.7957 }), 0.53, 0.05));

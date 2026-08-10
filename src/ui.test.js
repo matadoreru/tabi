@@ -16,6 +16,13 @@ Deno.test("normaliza búsquedas sin distinguir mayúsculas ni tildes", () => {
   assertEquals(searchKey("España"), "espana");
 });
 
+Deno.test("el autocompletado oculta las opciones que no coinciden", async () => {
+  const css = await Deno.readTextFile(new URL("./styles.css", import.meta.url));
+  if (!/\.autocomplete-options button\[hidden\]\s*{\s*display:\s*none;\s*}/.test(css)) {
+    throw new Error("Las opciones filtradas del autocompletado deben permanecer ocultas");
+  }
+});
+
 Deno.test("formatea fechas ISO con hora usadas por los miembros", () => {
   if (!formatDate("2026-08-09T19:00:00.000Z", { year: "numeric" }).includes("2026")) {
     throw new Error("La fecha ISO completa no se ha formateado");

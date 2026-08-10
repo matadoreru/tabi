@@ -1,6 +1,14 @@
 import { CATEGORIES } from "./data.js";
 import { countryOptions, TRIP_EMOJIS } from "./countries.js";
-import { budgetSummary, dateRange, durationLabel, groupTotals, itineraryAnalysis } from "./domain.js";
+import {
+  activityGoogleMapsUrl,
+  budgetSummary,
+  dateRange,
+  durationLabel,
+  fundContributorOptions,
+  groupTotals,
+  itineraryAnalysis,
+} from "./domain.js";
 import { Store } from "./store.js";
 import { badge, emptyState, esc, formatDate, formatMoney, fullDate, icon, modal, toast } from "./ui.js";
 import { apiClient, ApiError } from "./api-client.js";
@@ -72,6 +80,14 @@ const fields = {
       options: () => store.collection("places").map((place) => ({ value: place.id, label: place.name })),
     },
     {
+      name: "mapsUrl",
+      label: "Enlace de Google Maps",
+      type: "url",
+      placeholder: "https://maps.app.goo.gl/…",
+      help: "Opcional. Si lo dejas vacío, se buscará el lugar o zona indicado arriba.",
+      full: true,
+    },
+    {
       name: "status",
       label: "Estado",
       type: "select",
@@ -139,7 +155,7 @@ const fields = {
   ],
   fund: [
     { name: "title", label: "Concepto", required: true, placeholder: "Ej. Fondo inicial", full: true },
-    { name: "contributor", label: "Aportado por", required: true },
+    { name: "contributor", label: "Aportado por", type: "select", required: true },
     { name: "date", label: "Fecha", type: "date", required: true },
     { name: "currency", label: "Moneda", type: "select", options: ["JPY", "EUR"] },
     { name: "amount", label: "Importe", type: "number", min: 0.01, step: "0.01", required: true },
@@ -221,10 +237,14 @@ const fields = {
   ],
 };
 
-function resolvedFields(type) {
+function resolvedFields(type, values = {}) {
   return fields[type].map((field) => ({
     ...field,
-    options: typeof field.options === "function" ? field.options() : field.options,
+    options: type === "fund" && field.name === "contributor"
+      ? fundContributorOptions(store.getState().members, values.contributor)
+      : typeof field.options === "function"
+      ? field.options()
+      : field.options,
   }));
 }
 function todayIso() {
@@ -390,7 +410,7 @@ function renderAuth(error = "") {
       ui.busy ? "Un momento…" : register ? "Crear cuenta" : "Iniciar sesión"
     }</button></div></form><button class="btn btn-ghost" data-auth-mode="${register ? "login" : "register"}">${
       register ? "Ya tengo cuenta" : "Crear una cuenta"
-    }</button></section><aside class="auth-art"><div><span>🇯🇵</span><h2>Planear juntos hace que el viaje empiece antes.</h2><p>Itinerario, presupuesto y reservas sincronizados para todo el equipo.</p></div></aside></main>`;
+    }</button></section><aside class="auth-art"><div><h2>Planear juntos hace que el viaje empiece antes.</h2><p>Itinerario, presupuesto y reservas sincronizados para todo el equipo.</p></div></aside></main>`;
   bindAuth();
 }
 
@@ -878,6 +898,18 @@ function activitiesForDate(date) {
   }));
   return [...activities, ...stays, ...transports];
 }
+
+function activityMapsButton(item) {
+  if (item.virtual) return "";
+  const url = activityGoogleMapsUrl(item, store.collection("places"));
+  return url
+    ? `<a class="btn btn-ghost icon-btn" data-activity-maps href="${
+      esc(url)
+    }" target="_blank" rel="noreferrer" aria-label="Abrir en Google Maps" title="Abrir en Google Maps">${
+      icon("map")
+    }</a>`
+    : "";
+}
 function addMinutes(time, value) {
   const total = (Number(time.split(":")[0]) * 60 + Number(time.split(":")[1]) + value) % (24 * 60);
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
@@ -926,7 +958,7 @@ function renderItinerary() {
             item.virtual ? "•" : "⋮⋮"
           }</span><div class="event-body"><strong>${esc(item.title)}</strong><small>${
             esc(item.location || item.city || item.type)
-          } · ${durationLabel(timeDiff(item.start, item.end))}</small></div>${
+          } · ${durationLabel(timeDiff(item.start, item.end))}</small></div>${activityMapsButton(item)}${
             item.virtual ? badge("Sincronizado", "blue") : badge(item.status === "done" ? "Realizado" : item.type)
           }</div></div>`
         ).join("")
@@ -1588,7 +1620,7 @@ function openEditor(collection, idValue) {
   }[type] || {};
   modal({
     title: item ? `Editar ${label.toLowerCase()}` : `Nuevo ${label.toLowerCase()}`,
-    fields: resolvedFields(type),
+    fields: resolvedFields(type, item || defaults),
     values: item || defaults,
     dangerLabel: item ? "Eliminar" : "",
     onSubmit: async (values) => {
@@ -1721,6 +1753,9 @@ function bindRoute() {
     card.addEventListener("click", () => {
       if (!card.dataset.editActivity.startsWith("virtual")) openEditor("activities", card.dataset.editActivity);
     })
+  );
+  app.querySelectorAll("[data-activity-maps]").forEach((link) =>
+    link.addEventListener("click", (event) => event.stopPropagation())
   );
   app.querySelectorAll("[data-map-place]").forEach((button) =>
     button.addEventListener("click", () => {
