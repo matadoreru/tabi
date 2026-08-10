@@ -257,6 +257,19 @@ const fields = {
       help: "Admite TikTok, Instagram Reels, YouTube Shorts y vídeos de YouTube.",
       full: true,
     },
+    {
+      name: "category",
+      label: "Categoría",
+      type: "select",
+      options: ["Lugares", "Comida", "Actividades", "Compras", "Alojamiento", "Transporte", "Consejos", "Otros"],
+    },
+    {
+      name: "note",
+      label: "Nota",
+      type: "textarea",
+      placeholder: "¿Qué quieres recordar de este vídeo?",
+      full: true,
+    },
   ],
 };
 
@@ -685,7 +698,7 @@ function renderShareTarget() {
               trips.map((trip) => `<option value="${esc(trip.id)}">${esc(`${trip.emoji} ${trip.name}`)}</option>`).join(
                 "",
               )
-            }</select></div><div class="field full"><button class="btn btn-primary" type="submit">${
+            }</select></div><div class="field full"><label for="share-category">Categoría</label><select id="share-category" name="category"><option>Lugares</option><option>Comida</option><option>Actividades</option><option>Compras</option><option>Alojamiento</option><option>Transporte</option><option>Consejos</option><option>Otros</option></select></div><div class="field full"><label for="share-note">Nota</label><textarea id="share-note" name="note" placeholder="¿Qué quieres recordar de este vídeo?"></textarea></div><div class="field full"><button class="btn btn-primary" type="submit">${
               icon("plus")
             } Guardar en Inspiración</button></div></form>`
             : `<div class="insight warning">${
@@ -699,9 +712,9 @@ function renderShareTarget() {
     event.preventDefault();
     const button = event.currentTarget.querySelector('[type="submit"]');
     button.disabled = true;
-    const { tripId } = Object.fromEntries(new FormData(event.currentTarget));
+    const { tripId, category, note } = Object.fromEntries(new FormData(event.currentTarget));
     try {
-      await apiClient.post(`/trips/${tripId}/inspirations`, { url: link.url });
+      await apiClient.post(`/trips/${tripId}/inspirations`, { url: link.url, category, note });
       history.replaceState({}, "", "/");
       await enterTrip(tripId, "inspiration");
       toast("Enlace guardado en Inspiración");
@@ -1621,22 +1634,34 @@ function renderInspiration() {
     ...item,
     platform: inspirationLink(item.url)?.platform || "",
   }));
-  const items = [...filtered(enriched, ["url", "platform"])].reverse();
+  const items = [...filtered(enriched, ["url", "platform", "category", "note"])].reverse();
   return `<div class="insight inspiration-help" style="margin-bottom:18px">${
     icon("play")
   }<div><strong>Guarda ideas desde tus redes</strong>En Android, instala Tabi y utiliza Compartir → Tabi para elegir el viaje. En iOS esta función automática no está disponible: copia el enlace y añádelo manualmente aquí.</div></div>${
-    toolbar(["Todos", "TikTok", "Instagram", "YouTube"])
+    toolbar([
+      "Todos",
+      "Lugares",
+      "Comida",
+      "Actividades",
+      "Compras",
+      "Alojamiento",
+      "Transporte",
+      "Consejos",
+      "Otros",
+    ])
   }<div class="grid grid-3 inspiration-grid">${
     items.map((item) => {
       const link = inspirationLink(item.url);
       if (!link) return "";
       return `<article class="card inspiration-card"><div class="inspiration-cover ${link.key}"><span>${
         icon("play")
-      }</span><strong>${esc(link.platform)}</strong></div><div class="inspiration-body"><div>${
+      }</span><strong>${esc(link.platform)}</strong></div><div class="inspiration-body"><div>${`<span>${
         badge(link.platform)
-      }<span class="cell-sub">Guardado ${formatDate(item.createdAt)}</span></div><p>${
+      } ${badge(item.category || "Otros", "blue")}</span>`}<span class="cell-sub">Guardado ${
+        formatDate(item.createdAt)
+      }</span></div><p>${esc(item.note || "Sin nota")}</p><small class="cell-sub inspiration-host">${
         esc(new URL(link.url).hostname.replace(/^www\./, ""))
-      }</p><div class="place-meta"><a class="btn btn-primary" href="${
+      }</small><div class="place-meta"><a class="btn btn-primary" href="${
         esc(link.url)
       }" target="_blank" rel="noreferrer">${icon("external")} Ver en ${esc(link.platform)}</a>${
         session.can(PERMISSIONS.TRIP_EDIT)

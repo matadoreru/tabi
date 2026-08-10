@@ -121,15 +121,15 @@ Deno.test({
     const inspiration = await call(
       "POST",
       `/api/trips/${tripId}/inspirations`,
-      { url: "https://www.instagram.com/reel/ABC123/" },
+      { url: "https://www.instagram.com/reel/ABC123/", category: "Comida", note: "Probar este restaurante" },
       owner.cookie,
     );
     assertEquals(inspiration.status, 201);
     assertEquals(inspiration.data.item.url, "https://www.instagram.com/reel/ABC123/");
     assertEquals(
       db.prepare("SELECT data FROM inspirations WHERE id=?").get(inspiration.data.item.id).data,
-      '{"url":"https://www.instagram.com/reel/ABC123/"}',
-      "La inspiración solo debe guardar el enlace",
+      '{"url":"https://www.instagram.com/reel/ABC123/","category":"Comida","note":"Probar este restaurante"}',
+      "La inspiración debe guardar el enlace, la categoría y la nota",
     );
     const duplicateInspiration = await call(
       "POST",

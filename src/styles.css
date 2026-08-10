@@ -779,6 +779,10 @@ textarea {
   margin: 14px 0;
   color: var(--muted);
 }
+.inspiration-host {
+  display: block;
+  margin: -8px 0 14px;
+}
 .inspiration-help {
   background: var(--accent-soft);
   box-shadow: none;
