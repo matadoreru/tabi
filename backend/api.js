@@ -670,7 +670,7 @@ function validateEntity(collection, data) {
     throw new HttpError(422, "INVALID_TIME", "La hora final debe ser posterior a la inicial.");
   }
   if (collection === "inspirations") {
-    const allowedFields = new Set(["url", "category", "note"]);
+    const allowedFields = new Set(["url", "category", "note", "watched"]);
     if (Object.keys(data).some((field) => !allowedFields.has(field))) {
       throw new HttpError(422, "INVALID_INSPIRATION", "La inspiración contiene campos no permitidos.");
     }
@@ -695,6 +695,7 @@ function validateEntity(collection, data) {
     ];
     data.category = categories.includes(data.category) ? data.category : "Otros";
     data.note = String(data.note || "").trim();
+    data.watched = data.watched === true || data.watched === "true";
     if (data.note.length > 2000) {
       throw new HttpError(422, "INVALID_INSPIRATION_NOTE", "La nota no puede superar los 2000 caracteres.");
     }

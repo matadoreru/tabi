@@ -26,8 +26,10 @@ const ui = {
   selectedDate: "",
   itineraryView: "day",
   mapPlaceId: "",
+  mapSidebarOpen: false,
   filter: "Todos",
   authMode: "login",
+  inspirationStatus: "Todos",
   busy: false,
 };
 
@@ -63,6 +65,8 @@ const DESCRIPTIONS = {
   settings: "Personaliza el viaje y protege tus datos",
 };
 
+const PLACE_MARKER_ICONS = ["📍", "⛩️", "🍜", "☕", "🛍️", "🏛️", "🌿", "🌇", "✨", "🎟️", "🏨", "🚉", "📸", "⭐"];
+
 const fields = {
   activity: [
     { name: "title", label: "Actividad", required: true, placeholder: "Ej. Visita a Kiyomizu-dera", full: true },
@@ -71,7 +75,40 @@ const fields = {
       name: "type",
       label: "Tipo",
       type: "select",
-      options: ["Visita", "Comida", "Transporte", "Compras", "Check-in", "Vuelo", "Actividad", "Otro"],
+      options: [
+        "Visita",
+        "Comida",
+        "Hospedaje",
+        { value: "Trayecto", label: "Trayecto (tren, vuelo…)" },
+        "Transporte",
+        "Compras",
+        "Check-in",
+        "Vuelo",
+        "Actividad",
+        "Otro",
+      ],
+    },
+    {
+      name: "stayId",
+      label: "Hospedaje guardado",
+      type: "select",
+      empty: "Selecciona un hospedaje",
+      options: () =>
+        store.collection("stays").map((stay) => ({
+          value: stay.id,
+          label: `${stay.name}${stay.city ? ` · ${stay.city}` : ""}`,
+        })),
+    },
+    {
+      name: "transportId",
+      label: "Trayecto guardado",
+      type: "select",
+      empty: "Selecciona un tren, vuelo u otro trayecto",
+      options: () =>
+        store.collection("transports").map((transport) => ({
+          value: transport.id,
+          label: `${transport.type || "Trayecto"} · ${transport.origin} → ${transport.destination}`,
+        })),
     },
     { name: "start", label: "Empieza", type: "time", required: true },
     { name: "end", label: "Termina", type: "time", required: true },
@@ -105,6 +142,12 @@ const fields = {
     { name: "city", label: "Ciudad", required: true },
     { name: "area", label: "Zona / barrio" },
     { name: "category", label: "Categoría", type: "select", options: CATEGORIES.place },
+    {
+      name: "markerIcon",
+      label: "Icono del mapa",
+      type: "select",
+      options: PLACE_MARKER_ICONS.map((value) => ({ value, label: `${value} Marcador` })),
+    },
     { name: "status", label: "Estado", type: "select", options: ["Pendiente", "Planeado", "Visitado", "Descartado"] },
     { name: "description", label: "Descripción", type: "textarea", full: true },
     { name: "address", label: "Dirección", full: true },
@@ -1183,6 +1226,61 @@ function googlePlaceCity(place) {
   return component?.longText || component?.long_name || "Sin especificar";
 }
 
+function savedPlaceIcon(place) {
+  return place.markerIcon || placeEmoji(place.category) || "📍";
+}
+
+function placeDirectionsUrl(place) {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${place.lat},${place.lng}`)}`;
+}
+
+function mapSelectedDetails(place) {
+  if (!place) return `<p class="cell-sub">Selecciona un marcador para ver la información del lugar.</p>`;
+  return `<div class="map-selected-title"><span class="map-selected-icon">${
+    esc(savedPlaceIcon(place))
+  }</span><div><strong>${esc(place.name)}</strong><small>${esc(place.city || "")} ${
+    place.area ? `· ${esc(place.area)}` : ""
+  }</small></div></div><div class="map-selected-badges">${badge(place.category || "Lugar")} ${
+    badge(place.status || "Pendiente")
+  }</div><p>${esc(place.description || place.notes || "Sin notas añadidas.")}</p><small>${
+    esc(place.address || "Dirección no disponible")
+  }</small><div class="map-selected-actions"><a class="btn btn-secondary" target="_blank" rel="noreferrer" href="${
+    esc(placeDirectionsUrl(place))
+  }">${icon("external")} Cómo llegar</a>${
+    session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-ghost icon-btn" type="button" data-edit="places:${place.id}" aria-label="Editar lugar">${
+        icon("edit")
+      }</button>`
+      : ""
+  }</div>`;
+}
+
+function mapMarkerContent(place) {
+  const marker = document.createElement("div");
+  marker.className = "custom-map-marker";
+  marker.textContent = savedPlaceIcon(place);
+  marker.setAttribute("aria-label", place.name);
+  return marker;
+}
+
+function mapInfoContent(place) {
+  const content = document.createElement("div");
+  content.className = "map-info-window";
+  content.innerHTML = `<div>${badge(place.category || "Lugar")} ${badge(place.status || "Pendiente")}</div><p>${
+    esc(place.description || place.notes || "Sin notas añadidas.")
+  }</p><small>${esc(place.address || `${place.city || ""} ${place.area || ""}`.trim())}</small><a href="${
+    esc(placeDirectionsUrl(place))
+  }" target="_blank" rel="noreferrer">Abrir ruta en Google Maps</a>`;
+  return content;
+}
+
+function setMapSidebarOpen(open) {
+  ui.mapSidebarOpen = open;
+  document.querySelector(".map-sidebar")?.classList.toggle("open", open);
+  document.querySelector(".map-drawer-backdrop")?.classList.toggle("open", open);
+  document.querySelector("[data-map-panel-toggle]")?.setAttribute("aria-expanded", String(open));
+}
+
 async function googlePlaceFromLink(value) {
   const resolved = (await apiClient.post("/maps/resolve", { url: value })).url;
   const config = await apiClient.get("/config/maps");
@@ -1247,11 +1345,13 @@ function initializePlaceLinkImport(root) {
     button.textContent = "Consultando Google Maps…";
     try {
       const { place, resolved } = await googlePlaceFromLink(input.value);
+      const category = googlePlaceCategory(place.primaryType);
       const values = {
         name: place.displayName || "",
         city: googlePlaceCity(place),
         address: place.formattedAddress || "",
-        category: googlePlaceCategory(place.primaryType),
+        category,
+        markerIcon: placeEmoji(category),
         hours: place.regularOpeningHours?.weekdayDescriptions?.join(" · ") || "",
         lat: place.location.lat(),
         lng: place.location.lng(),
@@ -1271,6 +1371,51 @@ function initializePlaceLinkImport(root) {
   });
 }
 
+function initializeActivityLinks(root) {
+  const typeInput = root.querySelector("#field-type");
+  const stayInput = root.querySelector("#field-stayId");
+  const transportInput = root.querySelector("#field-transportId");
+  if (!typeInput || !stayInput || !transportInput) return;
+
+  const stayField = root.querySelector('[data-field="stayId"]');
+  const transportField = root.querySelector('[data-field="transportId"]');
+  const setValue = (name, value) => {
+    const input = root.querySelector(`#field-${name}`);
+    if (input && value !== undefined && value !== null && value !== "") input.value = value;
+  };
+  const updateLinkedFields = () => {
+    stayField.hidden = typeInput.value !== "Hospedaje";
+    transportField.hidden = typeInput.value !== "Trayecto";
+  };
+
+  typeInput.addEventListener("change", updateLinkedFields);
+  stayInput.addEventListener("change", () => {
+    const stay = store.collection("stays").find((item) => item.id === stayInput.value);
+    if (!stay) return;
+    setValue("title", `Dormir · ${stay.name}`);
+    setValue("date", stay.checkInDate);
+    setValue("start", "22:00");
+    const start = "22:00";
+    setValue("end", start < "23:00" ? addMinutes(start, 60) : "23:59");
+    setValue("city", stay.city);
+    setValue("location", stay.address || stay.name);
+    setValue("mapsUrl", stay.link);
+  });
+  transportInput.addEventListener("change", () => {
+    const transport = store.collection("transports").find((item) => item.id === transportInput.value);
+    if (!transport) return;
+    const start = transport.departureTime || "09:00";
+    const sameDayArrival = transport.arrivalDate === transport.departureDate && transport.arrivalTime > start;
+    setValue("title", `${transport.type || "Trayecto"} · ${transport.origin} → ${transport.destination}`);
+    setValue("date", transport.departureDate);
+    setValue("start", start);
+    setValue("end", sameDayArrival ? transport.arrivalTime : start < "23:00" ? addMinutes(start, 60) : "23:59");
+    setValue("city", transport.origin);
+    setValue("location", transport.operator || `${transport.origin} → ${transport.destination}`);
+  });
+  updateLinkedFields();
+}
+
 async function initializeGoogleMap() {
   const canvas = document.querySelector("#google-map");
   const searchHost = document.querySelector("#google-place-search");
@@ -1284,7 +1429,7 @@ async function initializeGoogleMap() {
     return;
   }
   await loadGoogleMaps(config.apiKey);
-  const [{ Map }, { AdvancedMarkerElement }, { PlaceAutocompleteElement }] = await Promise.all([
+  const [{ Map, InfoWindow }, { AdvancedMarkerElement }, { PlaceAutocompleteElement }] = await Promise.all([
     google.maps.importLibrary("maps"),
     google.maps.importLibrary("marker"),
     google.maps.importLibrary("places"),
@@ -1300,14 +1445,38 @@ async function initializeGoogleMap() {
     fullscreenControl: true,
   });
   const bounds = new google.maps.LatLngBounds();
+  const infoWindow = new InfoWindow({ maxWidth: 320 });
+  const markers = new globalThis.Map();
+  const selectPlace = (place, marker) => {
+    ui.mapPlaceId = place.id;
+    markers.forEach((item, id) => item.content.classList.toggle("selected", id === place.id));
+    document.querySelectorAll("[data-map-place]").forEach((button) =>
+      button.classList.toggle("active", button.dataset.mapPlace === place.id)
+    );
+    document.querySelectorAll("[data-map-selected]").forEach((host) => host.innerHTML = mapSelectedDetails(place));
+    document.querySelectorAll("[data-map-selected] [data-edit]").forEach((button) =>
+      button.addEventListener("click", () => openEditor("places", place.id))
+    );
+    const heading = document.createElement("strong");
+    heading.textContent = `${savedPlaceIcon(place)} ${place.name}`;
+    infoWindow.setHeaderContent(heading);
+    infoWindow.setContent(mapInfoContent(place));
+    infoWindow.open({ anchor: marker, map, shouldFocus: false });
+    map.panTo(marker.position);
+    setMapSidebarOpen(false);
+  };
   places.forEach((place) => {
     const position = { lat: place.lat, lng: place.lng };
     bounds.extend(position);
-    const marker = new AdvancedMarkerElement({ map, position, title: place.name });
-    marker.addListener("click", () => {
-      ui.mapPlaceId = place.id;
-      render();
+    const content = mapMarkerContent(place);
+    const marker = new AdvancedMarkerElement({
+      map,
+      position,
+      title: place.name,
+      content,
     });
+    markers.set(place.id, { marker, content });
+    marker.addListener("click", () => selectPlace(place, marker));
   });
   if (places.length === 1) {
     map.setCenter({ lat: places[0].lat, lng: places[0].lng });
@@ -1315,6 +1484,8 @@ async function initializeGoogleMap() {
   } else if (places.length > 1) {
     map.fitBounds(bounds, 70);
   }
+  const selectedPlace = places.find(({ id }) => id === ui.mapPlaceId);
+  if (selectedPlace) selectPlace(selectedPlace, markers.get(selectedPlace.id).marker);
 
   const autocomplete = new PlaceAutocompleteElement();
   autocomplete.placeholder = "Busca un sitio en Google Maps";
@@ -1370,6 +1541,7 @@ async function initializeGoogleMap() {
           city: googlePlaceCity(place),
           area: "",
           category: googlePlaceCategory(place.primaryType),
+          markerIcon: placeEmoji(googlePlaceCategory(place.primaryType)),
           status: "Pendiente",
           address: place.formattedAddress || "",
           lat: place.location.lat(),
@@ -1392,26 +1564,32 @@ function renderMap() {
   const places = store.collection("places").filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
   const selected = places.find((p) => p.id === ui.mapPlaceId) || places[0];
   if (selected) ui.mapPlaceId = selected.id;
-  return `<section class="card map-layout"><aside class="map-sidebar"><div id="google-place-search" class="google-place-search"><span class="cell-sub">Cargando buscador…</span></div><div id="google-place-preview"></div><div class="map-saved-head"><strong>Sitios guardados</strong><span>${places.length}</span></div><div class="item-list">${
+  return `<section class="card map-layout"><aside class="map-sidebar ${
+    ui.mapSidebarOpen ? "open" : ""
+  }"><div class="map-sidebar-head"><strong>Explorar lugares</strong><button class="btn btn-ghost icon-btn" type="button" data-map-panel-close aria-label="Cerrar lista">${
+    icon("close")
+  }</button></div><div id="google-place-search" class="google-place-search"><span class="cell-sub">Cargando buscador…</span></div><div id="google-place-preview"></div><div class="map-saved-head"><strong>Sitios guardados</strong><span>${places.length}</span></div><div class="item-list map-place-list">${
     places.map((p) =>
-      `<button class="list-item" style="cursor:pointer;text-align:left;color:inherit" data-map-place="${p.id}"><span class="stat-icon red">${
-        placeEmoji(p.category)
+      `<button class="list-item ${
+        p.id === selected?.id ? "active" : ""
+      }" style="cursor:pointer;text-align:left;color:inherit" data-map-place="${p.id}"><span class="map-list-icon">${
+        esc(savedPlaceIcon(p))
       }</span><span class="list-item-main"><strong>${esc(p.name)}</strong><small>${esc(p.city)} · ${
         esc(p.area)
       }</small></span>${icon("chevron")}</button>`
     ).join("") || `<p class="cell-sub">Busca un sitio arriba para añadirlo al viaje.</p>`
-  }</div>${
-    selected
-      ? `<div class="map-selected"><div><strong>${esc(selected.name)}</strong><small>${
-        esc(selected.address)
-      }</small></div><a class="btn btn-secondary" target="_blank" rel="noreferrer" href="https://www.google.com/maps/dir/?api=1&destination=${selected.lat},${selected.lng}">${
-        icon("external")
-      } Cómo llegar</a></div>`
-      : ""
-  }</aside><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div></section>`;
+  }</div><div class="map-selected" data-map-selected>${
+    mapSelectedDetails(selected)
+  }</div></aside><button class="map-drawer-backdrop ${
+    ui.mapSidebarOpen ? "open" : ""
+  }" type="button" data-map-panel-close aria-label="Cerrar lista de lugares"></button><div class="map-stage"><button class="btn btn-secondary map-panel-toggle" type="button" data-map-panel-toggle aria-expanded="${ui.mapSidebarOpen}">${
+    icon("menu")
+  } Lugares (${places.length})</button><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div><div class="map-mobile-selected" data-map-selected>${
+    mapSelectedDetails(selected)
+  }</div></div></section>`;
 }
 
-function toolbar(filters = []) {
+function toolbar(filters = [], extra = "") {
   return `<div class="toolbar"><div class="search">${icon("search")}<input data-search placeholder="Buscar…" value="${
     esc(ui.query)
   }"></div>${
@@ -1420,7 +1598,7 @@ function toolbar(filters = []) {
         filters.map((f) => `<option value="${esc(f)}" ${ui.filter === f ? "selected" : ""}>${esc(f)}</option>`).join("")
       }</select>`
       : ""
-  }</div>`;
+  }${extra}</div>`;
 }
 function filtered(items, keys) {
   const query = ui.query.trim().toLowerCase();
@@ -1634,39 +1812,51 @@ function renderInspiration() {
     ...item,
     platform: inspirationLink(item.url)?.platform || "",
   }));
-  const items = [...filtered(enriched, ["url", "platform", "category", "note"])].reverse();
+  const items = filtered(enriched, ["url", "platform", "category", "note"])
+    .filter((item) =>
+      ui.inspirationStatus === "Todos" ||
+      (ui.inspirationStatus === "Vistos" ? Boolean(item.watched) : !item.watched)
+    )
+    .reverse();
   return `<div class="insight inspiration-help" style="margin-bottom:18px">${
     icon("play")
   }<div><strong>Guarda ideas desde tus redes</strong>En Android, instala Tabi y utiliza Compartir → Tabi para elegir el viaje. En iOS esta función automática no está disponible: copia el enlace y añádelo manualmente aquí.</div></div>${
-    toolbar([
-      "Todos",
-      "Lugares",
-      "Comida",
-      "Actividades",
-      "Compras",
-      "Alojamiento",
-      "Transporte",
-      "Consejos",
-      "Otros",
-    ])
+    toolbar(
+      ["Todos", "Lugares", "Comida", "Actividades", "Compras", "Alojamiento", "Transporte", "Consejos", "Otros"],
+      `<select data-inspiration-status style="max-width:160px" aria-label="Filtrar por visualización"><option value="Todos" ${
+        ui.inspirationStatus === "Todos" ? "selected" : ""
+      }>Todos</option><option value="No vistos" ${
+        ui.inspirationStatus === "No vistos" ? "selected" : ""
+      }>No vistos</option><option value="Vistos" ${
+        ui.inspirationStatus === "Vistos" ? "selected" : ""
+      }>Vistos</option></select>`,
+    )
   }<div class="grid grid-3 inspiration-grid">${
     items.map((item) => {
       const link = inspirationLink(item.url);
       if (!link) return "";
-      return `<article class="card inspiration-card"><div class="inspiration-cover ${link.key}"><span>${
-        icon("play")
-      }</span><strong>${esc(link.platform)}</strong></div><div class="inspiration-body"><div>${`<span>${
-        badge(link.platform)
-      } ${badge(item.category || "Otros", "blue")}</span>`}<span class="cell-sub">Guardado ${
-        formatDate(item.createdAt)
-      }</span></div><p>${esc(item.note || "Sin nota")}</p><small class="cell-sub inspiration-host">${
+      return `<article class="card inspiration-card ${
+        item.watched ? "watched" : ""
+      }"><div class="inspiration-cover ${link.key}"><span>${icon("play")}</span><strong>${
+        esc(link.platform)
+      }</strong></div><div class="inspiration-body"><div>${`<span>${badge(link.platform)} ${
+        badge(item.category || "Otros", "blue")
+      }</span>`}${badge(item.watched ? "Visto" : "No visto", item.watched ? "green" : "amber")}</div><p>${
+        esc(item.note || "Sin nota")
+      }</p><small class="cell-sub inspiration-host">${
         esc(new URL(link.url).hostname.replace(/^www\./, ""))
-      }</small><div class="place-meta"><a class="btn btn-primary" href="${
+      }</small><div class="place-meta inspiration-actions"><a class="btn btn-primary" href="${
         esc(link.url)
       }" target="_blank" rel="noreferrer">${icon("external")} Ver en ${esc(link.platform)}</a>${
         session.can(PERMISSIONS.TRIP_EDIT)
-          ? `<button class="btn btn-ghost icon-btn" data-edit="inspirations:${item.id}" aria-label="Editar enlace">${
+          ? `<button class="btn btn-secondary" type="button" data-toggle-inspiration="${item.id}">${
+            icon(item.watched ? "close" : "check")
+          } ${
+            item.watched ? "Marcar no visto" : "Marcar visto"
+          }</button><button class="btn btn-ghost icon-btn" data-edit="inspirations:${item.id}" aria-label="Editar enlace">${
             icon("edit")
+          }</button><button class="btn btn-ghost icon-btn" type="button" data-delete-inspiration="${item.id}" aria-label="Eliminar inspiración">${
+            icon("trash")
           }</button>`
           : ""
       }</div></div></article>`;
@@ -1847,7 +2037,7 @@ function openEditor(collection, idValue) {
   const [type, label] = config;
   const defaults = {
     activity: { date: activeDate(), start: "09:00", end: "10:00", status: "planned" },
-    place: { status: "Pendiente", priority: "Media", duration: 60 },
+    place: { status: "Pendiente", priority: "Media", duration: 60, markerIcon: "📍" },
     task: { phase: "Antes", priority: "Media", status: "Pendiente" },
     purchase: { status: "Pendiente", priority: "Media", actualPrice: 0 },
     expense: { date: todayIso(), currency: "JPY", paymentStatus: "Pendiente", person: "Ambos" },
@@ -1880,7 +2070,7 @@ function openEditor(collection, idValue) {
       toast(item ? "Cambios guardados" : "Elemento añadido");
       render();
     },
-    onReady: type === "place" ? initializePlaceLinkImport : undefined,
+    onReady: type === "place" ? initializePlaceLinkImport : type === "activity" ? initializeActivityLinks : undefined,
     onDanger: item
       ? async () => {
         await store.remove(collection, item.id);
@@ -1899,6 +2089,8 @@ function bindCommon() {
       ui.route = route;
       ui.query = "";
       ui.filter = "Todos";
+      ui.inspirationStatus = "Todos";
+      ui.mapSidebarOpen = false;
       render();
     })
   );
@@ -1920,6 +2112,10 @@ function bindCommon() {
   );
   app.querySelector("[data-filter]")?.addEventListener("change", (event) => {
     ui.filter = event.target.value;
+    render();
+  });
+  app.querySelector("[data-inspiration-status]")?.addEventListener("change", (event) => {
+    ui.inspirationStatus = event.target.value;
     render();
   });
   app.querySelectorAll("[data-edit]").forEach((button) =>
@@ -1999,11 +2195,45 @@ function bindRoute() {
   app.querySelectorAll("[data-activity-maps]").forEach((link) =>
     link.addEventListener("click", (event) => event.stopPropagation())
   );
+  app.querySelectorAll("[data-toggle-inspiration]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      const item = store.collection("inspirations").find(({ id }) => id === button.dataset.toggleInspiration);
+      if (!item) return;
+      button.disabled = true;
+      try {
+        await store.edit("inspirations", item.id, { watched: !item.watched });
+        toast(item.watched ? "Marcado como no visto" : "Marcado como visto");
+        render();
+      } catch (error) {
+        await refreshAfterConflict();
+        toast(error.message || "No se ha podido cambiar el estado.", "error");
+      }
+    })
+  );
+  app.querySelectorAll("[data-delete-inspiration]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      if (!confirm("¿Eliminar este enlace de Inspiración?")) return;
+      button.disabled = true;
+      try {
+        await store.remove("inspirations", button.dataset.deleteInspiration);
+        toast("Inspiración eliminada");
+        render();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message || "No se ha podido eliminar.", "error");
+      }
+    })
+  );
   app.querySelectorAll("[data-map-place]").forEach((button) =>
     button.addEventListener("click", () => {
       ui.mapPlaceId = button.dataset.mapPlace;
+      ui.mapSidebarOpen = false;
       render();
     })
+  );
+  app.querySelector("[data-map-panel-toggle]")?.addEventListener("click", () => setMapSidebarOpen(true));
+  app.querySelectorAll("[data-map-panel-close]").forEach((button) =>
+    button.addEventListener("click", () => setMapSidebarOpen(false))
   );
   app.querySelectorAll("[data-toggle-task]").forEach((button) =>
     button.addEventListener("click", async () => {
@@ -2257,6 +2487,8 @@ globalThis.addEventListener("hashchange", () => {
   ui.route = location.hash.slice(1) || "dashboard";
   ui.query = "";
   ui.filter = "Todos";
+  ui.inspirationStatus = "Todos";
+  ui.mapSidebarOpen = false;
   if (session.currentTrip) render();
 });
 store.subscribe(() => applyTheme());

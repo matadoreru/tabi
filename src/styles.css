@@ -742,6 +742,9 @@ textarea {
 .inspiration-card {
   overflow: hidden;
 }
+.inspiration-card.watched .inspiration-cover {
+  filter: saturate(.55);
+}
 .inspiration-cover {
   min-height: 150px;
   padding: 24px;
@@ -782,6 +785,10 @@ textarea {
 .inspiration-host {
   display: block;
   margin: -8px 0 14px;
+}
+.inspiration-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 .inspiration-help {
   background: var(--accent-soft);
@@ -1102,6 +1109,101 @@ textarea {
   overflow-y: auto;
   max-height: calc(100vh - 130px);
 }
+.map-sidebar-head {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.map-stage {
+  position: relative;
+  min-width: 0;
+}
+.map-panel-toggle,
+.map-drawer-backdrop,
+.map-mobile-selected {
+  display: none;
+}
+.map-place-list .list-item.active {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+.map-list-icon,
+.map-selected-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  font-size: 22px;
+}
+.map-selected-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.map-selected-title .map-selected-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+.map-selected-title strong,
+.map-selected-title small {
+  display: block;
+}
+.map-selected-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.map-selected p {
+  margin: 0;
+  color: var(--muted);
+}
+.map-selected-actions {
+  display: flex;
+  gap: 8px;
+}
+.map-selected-actions .btn {
+  width: auto;
+}
+.map-selected-actions .btn:not(.icon-btn) {
+  flex: 1;
+}
+.custom-map-marker {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 3px solid #fff;
+  border-radius: 14px 14px 14px 4px;
+  background: var(--primary);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, .28);
+  font-size: 21px;
+  transform: rotate(-8deg);
+  transition: transform .16s, scale .16s;
+}
+.custom-map-marker:hover,
+.custom-map-marker.selected {
+  z-index: 2;
+  scale: 1.18;
+  transform: rotate(0);
+}
+.map-info-window {
+  display: grid;
+  gap: 8px;
+  min-width: 210px;
+  color: #292926;
+}
+.map-info-window p {
+  margin: 0;
+}
+.map-info-window small {
+  color: #6e6d68;
+}
+.map-info-window a {
+  color: #b52e34;
+  font-weight: 700;
+}
 .google-place-search {
   min-height: 48px;
 }
@@ -1253,6 +1355,9 @@ textarea {
 .field {
   display: grid;
   gap: 6px;
+}
+.field[hidden] {
+  display: none;
 }
 .field.full {
   grid-column: 1 / -1;
@@ -1684,15 +1789,77 @@ textarea {
     grid-template-columns: 1fr 1fr;
   }
   .map-layout {
-    grid-template-columns: 1fr;
+    display: block;
+    position: relative;
+    min-height: calc(100dvh - 165px);
   }
   .map-sidebar {
-    max-height: 270px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    position: absolute;
+    z-index: 30;
+    inset: 0 auto 0 0;
+    width: min(88vw, 360px);
+    max-height: none;
+    border-right: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    transform: translateX(-105%);
+    transition: transform .2s ease;
+  }
+  .map-sidebar.open {
+    transform: translateX(0);
+  }
+  .map-sidebar-head {
+    display: flex;
+  }
+  .map-stage {
+    min-height: calc(100dvh - 165px);
   }
   .map-canvas {
-    min-height: 480px;
+    min-height: calc(100dvh - 165px);
+  }
+  .map-panel-toggle {
+    display: inline-flex;
+    position: absolute;
+    z-index: 12;
+    top: 12px;
+    left: 12px;
+    box-shadow: var(--shadow);
+  }
+  .map-drawer-backdrop {
+    display: block;
+    position: absolute;
+    z-index: 20;
+    inset: 0;
+    border: 0;
+    border-radius: inherit;
+    background: rgba(0, 0, 0, .3);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s;
+  }
+  .map-drawer-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .map-mobile-selected {
+    display: grid;
+    position: absolute;
+    z-index: 12;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    gap: 9px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(16px);
+  }
+  .map-mobile-selected > p,
+  .map-mobile-selected > small,
+  .map-mobile-selected .map-selected-badges {
+    display: none;
   }
   .auth-shell {
     grid-template-columns: 1fr;

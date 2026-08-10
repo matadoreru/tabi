@@ -125,9 +125,11 @@ export function modal({
         esc(field.placeholder || "")
       }">${esc(value)}</textarea>`;
     }
-    return `<div class="field ${field.full ? "full" : ""}"><label for="field-${field.name}">${esc(field.label)}${
-      field.required ? " *" : ""
-    }</label>${control}${field.help ? `<span class="field-help">${esc(field.help)}</span>` : ""}</div>`;
+    return `<div class="field ${field.full ? "full" : ""}" data-field="${
+      esc(field.name)
+    }"><label for="field-${field.name}">${esc(field.label)}${field.required ? " *" : ""}</label>${control}${
+      field.help ? `<span class="field-help">${esc(field.help)}</span>` : ""
+    }</div>`;
   }).join("");
   root.innerHTML =
     `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header class="modal-head"><h2 id="modal-title">${

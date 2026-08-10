@@ -113,11 +113,12 @@ Deno.test({
     const place = await call(
       "POST",
       `/api/trips/${tripId}/places`,
-      { name: "Museo Ghibli", city: "Tokio" },
+      { name: "Museo Ghibli", city: "Tokio", markerIcon: "🏛️" },
       owner.cookie,
     );
     assertEquals(place.status, 201);
     assertEquals(place.data.item.version, 1);
+    assertEquals(place.data.item.markerIcon, "🏛️");
     const inspiration = await call(
       "POST",
       `/api/trips/${tripId}/inspirations`,
@@ -128,9 +129,17 @@ Deno.test({
     assertEquals(inspiration.data.item.url, "https://www.instagram.com/reel/ABC123/");
     assertEquals(
       db.prepare("SELECT data FROM inspirations WHERE id=?").get(inspiration.data.item.id).data,
-      '{"url":"https://www.instagram.com/reel/ABC123/","category":"Comida","note":"Probar este restaurante"}',
-      "La inspiración debe guardar el enlace, la categoría y la nota",
+      '{"url":"https://www.instagram.com/reel/ABC123/","category":"Comida","note":"Probar este restaurante","watched":false}',
+      "La inspiración debe guardar el enlace, la categoría, la nota y su estado",
     );
+    const watchedInspiration = await call(
+      "PATCH",
+      `/api/trips/${tripId}/inspirations/${inspiration.data.item.id}`,
+      { watched: true, version: 1 },
+      owner.cookie,
+    );
+    assertEquals(watchedInspiration.status, 200);
+    assertEquals(watchedInspiration.data.item.watched, true);
     const duplicateInspiration = await call(
       "POST",
       `/api/trips/${tripId}/inspirations`,
