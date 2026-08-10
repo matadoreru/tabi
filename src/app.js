@@ -423,7 +423,7 @@ function layout(content) {
         icon("plus")
       }<span>Añadir ${addable.toLowerCase()}</span></button>`
       : ""
-  }</div></header><div class="content">${content}</div></main>
+  }</div></header><div class="content ${ui.route === "map" ? "content-map" : ""}">${content}</div></main>
     <nav class="mobile-nav">${navButton("dashboard", "Inicio", "dashboard", true)}${
     navButton("itinerary", "Plan", "calendar", true)
   }${navButton("map", "Mapa", "map", true)}${navButton("budget", "Gastos", "wallet", true)}${
@@ -1458,6 +1458,7 @@ async function initializeGoogleMap() {
       button.addEventListener("click", () => openEditor("places", place.id))
     );
     const heading = document.createElement("strong");
+    heading.className = "map-info-title";
     heading.textContent = `${savedPlaceIcon(place)} ${place.name}`;
     infoWindow.setHeaderContent(heading);
     infoWindow.setContent(mapInfoContent(place));
