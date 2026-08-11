@@ -14,9 +14,9 @@ import { randomToken, sha256 } from "./crypto.js";
 import { CONFIG, ENTITY_TABLES } from "./config.js";
 import { body, HttpError, json, newId, now, validateMutationOrigin } from "./http.js";
 import { eventStream, publish } from "./events.js";
-import { resolveGoogleMapsUrl } from "./google-maps.js";
+import { googleMapsUrl, resolveGoogleMapsUrl } from "./google-maps.js";
 import { PERMISSIONS, permissionsForRole } from "../src/permissions.js";
-import { inspirationLink } from "../src/domain.js";
+import { findPlaceDuplicate, inspirationLink } from "../src/domain.js";
 
 const editPermission = (collection) =>
   collection === "expenses" || collection === "funds"
@@ -33,6 +33,12 @@ export async function api(request, pathname) {
   if (parts[0] === "health" && request.method === "GET") {
     db.prepare("SELECT 1").get();
     return json({ status: "ok" });
+  }
+  if (parts[0] === "version" && request.method === "GET") {
+    return json({
+      commit: CONFIG.commitSha || null,
+      shortCommit: CONFIG.commitSha ? CONFIG.commitSha.slice(0, 8) : null,
+    });
   }
   if (parts[0] === "auth") return authRoutes(request, parts.slice(1));
   if (parts[0] === "invite") return invitePublicRoutes(request, parts.slice(1));
@@ -66,6 +72,7 @@ export async function api(request, pathname) {
   if (resource === "duplicate") return duplicateTrip(request, user, tripId);
   if (resource === "leave") return leaveTrip(request, user, tripId);
   if (resource === "transfer") return transferTrip(request, user, tripId);
+  if (resource === "archive") return tripArchiveRoutes(request, user, tripId);
   if (resource === "import") return importTripData(request, user, tripId);
   if (ENTITY_TABLES[resource]) return entityRoutes(request, user, tripId, resource, parts[3]);
   throw new HttpError(404, "NOT_FOUND", "Ruta no encontrada.");
@@ -226,7 +233,10 @@ async function entityRoutes(request, user, tripId, collection, id) {
     const entityId = newId(collection.slice(0, 3));
     const data = cleanEntity(input);
     validateEntity(collection, data);
+    if (collection === "activities") assertActivityReference(tripId, data);
+    if (collection === "places" && googleMapsUrl(data.link)) data.link = await resolveGoogleMapsUrl(data.link);
     if (collection === "inspirations") assertUniqueInspiration(tripId, data.url);
+    if (collection === "places") assertUniquePlace(tripId, data);
     const title = entityTitle(collection, data);
     db.prepare(
       `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
@@ -246,7 +256,10 @@ async function entityRoutes(request, user, tripId, collection, id) {
     delete data.id;
     delete data.tripId;
     validateEntity(collection, data);
+    if (collection === "activities") assertActivityReference(tripId, data);
+    if (collection === "places" && googleMapsUrl(data.link)) data.link = await resolveGoogleMapsUrl(data.link);
     if (collection === "inspirations") assertUniqueInspiration(tripId, data.url, id);
+    if (collection === "places") assertUniquePlace(tripId, data, id);
     const result = db.prepare(
       `UPDATE ${table} SET data=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND trip_id=? AND version=?`,
     )
@@ -464,6 +477,218 @@ function duplicateTrip(request, user, tripId) {
   return json({ tripId: newTripId }, 201);
 }
 
+const ARCHIVE_FORMAT = "tabi-trip";
+const ARCHIVE_SCHEMA_VERSION = 1;
+const entityMetadata = new Set([
+  "tripId",
+  "version",
+  "createdAt",
+  "updatedAt",
+  "createdBy",
+  "updatedBy",
+]);
+
+function portableEntity(entity) {
+  return Object.fromEntries(Object.entries(entity).filter(([key]) => !entityMetadata.has(key)));
+}
+
+function exportedTrip(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    emoji: row.emoji,
+    country: row.country,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    travelers: row.travelers,
+    budget: row.budget,
+    currency: row.currency,
+    extra: JSON.parse(row.data || "{}"),
+  };
+}
+
+async function tripArchiveRoutes(request, user, tripId) {
+  if (request.method === "GET") {
+    authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
+    const trip = db.prepare("SELECT * FROM trips WHERE id=?").get(tripId);
+    const collections = Object.fromEntries(
+      Object.entries(ENTITY_TABLES).map(([collection, table]) => [
+        collection,
+        db.prepare(`SELECT * FROM ${table} WHERE trip_id=? ORDER BY created_at`).all(tripId)
+          .map(readEntity)
+          .map(portableEntity),
+      ]),
+    );
+    return json({
+      format: ARCHIVE_FORMAT,
+      schemaVersion: ARCHIVE_SCHEMA_VERSION,
+      exportedAt: now(),
+      editingGuide: {
+        purpose: "Archivo completo y editable de un viaje de Tabi.",
+        rules: [
+          "Conserva format, schemaVersion y todas las claves de collections.",
+          "No cambies los id existentes: conectan actividades con lugares, alojamientos y transportes.",
+          "Para crear un elemento nuevo, omite su id; si otro elemento nuevo debe referenciarlo, usa un id único como place_new_1 en ambos.",
+          "Para eliminar un elemento, elimínalo de su colección.",
+          "Devuelve JSON válido, sin bloques Markdown ni comentarios.",
+        ],
+      },
+      trip: exportedTrip(trip),
+      collections,
+    });
+  }
+  if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
+  authorize(user.id, tripId, PERMISSIONS.TRIP_EDIT);
+  const input = await body(request, CONFIG.maxArchiveBytes);
+  return importTripArchive(input.archive || input, user, tripId);
+}
+
+async function importTripArchive(archive, user, tripId) {
+  if (archive?.format !== ARCHIVE_FORMAT || archive?.schemaVersion !== ARCHIVE_SCHEMA_VERSION) {
+    throw new HttpError(
+      422,
+      "INVALID_ARCHIVE",
+      "El archivo no es un proyecto Tabi compatible (tabi-trip, versión 1).",
+    );
+  }
+  if (!archive.trip || typeof archive.trip !== "object" || Array.isArray(archive.trip)) {
+    throw new HttpError(422, "INVALID_ARCHIVE", "El archivo no contiene los datos generales del viaje.");
+  }
+  const trip = {
+    name: String(archive.trip.name || "").trim(),
+    emoji: String(archive.trip.emoji || "✈️"),
+    country: String(archive.trip.country || ""),
+    startDate: archive.trip.startDate,
+    endDate: archive.trip.endDate,
+    travelers: Number(archive.trip.travelers || 1),
+    budget: Number(archive.trip.budget || 0),
+    currency: String(archive.trip.currency || "JPY"),
+    extra: archive.trip.extra && typeof archive.trip.extra === "object" && !Array.isArray(archive.trip.extra)
+      ? archive.trip.extra
+      : {},
+  };
+  validateTrip(trip);
+  if (!Number.isInteger(trip.travelers) || trip.travelers < 1 || !Number.isFinite(trip.budget) || trip.budget < 0) {
+    throw new HttpError(422, "INVALID_ARCHIVE", "Viajeros o presupuesto no válidos en el archivo.");
+  }
+  if (!archive.collections || typeof archive.collections !== "object" || Array.isArray(archive.collections)) {
+    throw new HttpError(422, "INVALID_ARCHIVE", "El archivo no contiene las colecciones del viaje.");
+  }
+
+  const prepared = {};
+  const idMaps = {};
+  for (const [collection, table] of Object.entries(ENTITY_TABLES)) {
+    const sources = archive.collections[collection];
+    if (!Array.isArray(sources)) {
+      throw new HttpError(422, "INVALID_ARCHIVE", `Falta la colección “${collection}” en el archivo.`);
+    }
+    const sourceIds = new Set();
+    idMaps[collection] = new Map();
+    prepared[collection] = [];
+    for (const source of sources) {
+      if (!source || typeof source !== "object" || Array.isArray(source)) {
+        throw new HttpError(422, "INVALID_ARCHIVE", `Hay un elemento no válido en “${collection}”.`);
+      }
+      const sourceId = source.id == null ? "" : String(source.id);
+      if (sourceId && !/^[A-Za-z0-9_-]{1,120}$/.test(sourceId)) {
+        throw new HttpError(422, "INVALID_ARCHIVE", `Hay un id no válido en “${collection}”.`);
+      }
+      if (sourceId && sourceIds.has(sourceId)) {
+        throw new HttpError(422, "INVALID_ARCHIVE", `El id “${sourceId}” está repetido en “${collection}”.`);
+      }
+      if (sourceId) sourceIds.add(sourceId);
+      const collision = sourceId ? db.prepare(`SELECT trip_id FROM ${table} WHERE id=?`).get(sourceId) : null;
+      const targetId = sourceId && (!collision || collision.trip_id === tripId)
+        ? sourceId
+        : newId(collection.slice(0, 3));
+      if (sourceId) idMaps[collection].set(sourceId, targetId);
+      const data = cleanEntity(source);
+      validateEntity(collection, data);
+      prepared[collection].push({ id: targetId, data });
+    }
+  }
+  await Promise.all(
+    prepared.places.map(async (item) => {
+      if (googleMapsUrl(item.data.link)) item.data.link = await resolveGoogleMapsUrl(item.data.link);
+    }),
+  );
+
+  const warnings = [];
+  const rewriteReference = (item, field, collection) => {
+    if (!item.data[field]) return;
+    const mapped = idMaps[collection].get(String(item.data[field]));
+    if (!mapped) {
+      warnings.push(`La actividad “${item.data.title || item.id}” conserva un ${field} sin elemento asociado.`);
+      return;
+    }
+    item.data[field] = mapped;
+  };
+  for (const activity of prepared.activities) {
+    rewriteReference(activity, "placeId", "places");
+    rewriteReference(activity, "stayId", "stays");
+    rewriteReference(activity, "transportId", "transports");
+  }
+  const acceptedPlaces = [];
+  for (const item of prepared.places) {
+    const duplicate = findPlaceDuplicate(item.data, acceptedPlaces);
+    if (duplicate) {
+      throw new HttpError(
+        422,
+        "DUPLICATE_PLACE_IN_ARCHIVE",
+        `El archivo contiene el lugar duplicado “${item.data.name}”.`,
+      );
+    }
+    acceptedPlaces.push({ id: item.id, ...item.data });
+  }
+  const inspirationUrls = new Set();
+  for (const item of prepared.inspirations) {
+    if (inspirationUrls.has(item.data.url)) {
+      throw new HttpError(
+        422,
+        "DUPLICATE_INSPIRATION_IN_ARCHIVE",
+        "El archivo contiene enlaces de inspiración repetidos.",
+      );
+    }
+    inspirationUrls.add(item.data.url);
+  }
+
+  const timestamp = now();
+  const entityCount = Object.values(prepared).reduce((sum, items) => sum + items.length, 0);
+  transaction(() => {
+    for (const table of Object.values(ENTITY_TABLES)) db.prepare(`DELETE FROM ${table} WHERE trip_id=?`).run(tripId);
+    db.prepare(
+      "UPDATE trips SET name=?,emoji=?,country=?,start_date=?,end_date=?,travelers=?,budget=?,currency=?,data=?,version=version+1,updated_at=?,updated_by=? WHERE id=?",
+    ).run(
+      trip.name,
+      trip.emoji,
+      trip.country,
+      trip.startDate,
+      trip.endDate,
+      trip.travelers,
+      trip.budget,
+      trip.currency,
+      JSON.stringify(trip.extra),
+      timestamp,
+      user.id,
+      tripId,
+    );
+    for (const [collection, table] of Object.entries(ENTITY_TABLES)) {
+      for (const item of prepared[collection]) {
+        db.prepare(
+          `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
+        ).run(item.id, tripId, JSON.stringify(item.data), 1, timestamp, timestamp, user.id, user.id);
+      }
+    }
+    audit(tripId, user.id, "trip.archive_imported", "trip", tripId, { entityCount, schemaVersion: 1 });
+  });
+  emit(tripId, user, "trip.archive_imported", "trips", tripId);
+  return json({
+    imported: entityCount,
+    warnings,
+    trip: readTrip(db.prepare("SELECT * FROM trips WHERE id=?").get(tripId)),
+  });
+}
+
 async function importTripData(request, user, tripId) {
   if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
   authorize(user.id, tripId, PERMISSIONS.TRIP_EDIT);
@@ -624,6 +849,31 @@ function assertUniqueInspiration(tripId, url, excludedId = "") {
   ).get(tripId, url, excludedId);
   if (duplicate) throw new HttpError(409, "INSPIRATION_EXISTS", "Este enlace ya está guardado en el viaje.");
 }
+function assertUniquePlace(tripId, candidate, excludedId = "") {
+  const places = db.prepare("SELECT * FROM places WHERE trip_id=?").all(tripId).map(readEntity);
+  const duplicate = findPlaceDuplicate(candidate, places, excludedId);
+  if (!duplicate) return;
+  const reason = duplicate.reason === "link" ? "enlace de Google Maps" : "nombre y ciudad";
+  throw new HttpError(
+    409,
+    "PLACE_EXISTS",
+    `Ya existe “${duplicate.place.name}” con el mismo ${reason}.`,
+    { duplicateId: duplicate.place.id, reason: duplicate.reason },
+  );
+}
+function assertActivityReference(tripId, activity) {
+  const relation = {
+    Lugar: ["places", activity.placeId],
+    Hospedaje: ["stays", activity.stayId],
+    Transporte: ["transports", activity.transportId],
+  }[activity.activityKind];
+  if (!relation) return;
+  const [collection, id] = relation;
+  const table = entityTable(collection);
+  if (!db.prepare(`SELECT 1 FROM ${table} WHERE id=? AND trip_id=?`).get(id, tripId)) {
+    throw new HttpError(422, "INVALID_ACTIVITY_LINK", "El elemento vinculado no existe en este viaje.");
+  }
+}
 function conflict(currentVersion) {
   throw new HttpError(
     409,
@@ -669,6 +919,58 @@ function validateEntity(collection, data) {
   if (collection === "activities" && data.end <= data.start) {
     throw new HttpError(422, "INVALID_TIME", "La hora final debe ser posterior a la inicial.");
   }
+  if (collection === "activities" && data.activityKind) {
+    if (!["General", "Lugar", "Hospedaje", "Transporte"].includes(data.activityKind)) {
+      throw new HttpError(422, "INVALID_ACTIVITY_KIND", "El tipo de actividad no es válido.");
+    }
+    const requiredLink = { Lugar: "placeId", Hospedaje: "stayId", Transporte: "transportId" }[data.activityKind];
+    if (requiredLink && !String(data[requiredLink] || "").trim()) {
+      throw new HttpError(422, "MISSING_ACTIVITY_LINK", "La actividad necesita un elemento vinculado.");
+    }
+  }
+  if (
+    collection === "places" && data.admission &&
+    !["No necesita entrada", "Entrada gratuita", "Entrada de pago", "Reserva obligatoria"].includes(data.admission)
+  ) {
+    throw new HttpError(422, "INVALID_ADMISSION", "El tipo de entrada del lugar no es válido.");
+  }
+  if (collection === "stays") {
+    if (
+      data.checkOutDate < data.checkInDate ||
+      (data.checkOutDate === data.checkInDate && data.checkInTime && data.checkOutTime &&
+        data.checkOutTime <= data.checkInTime)
+    ) {
+      throw new HttpError(422, "INVALID_STAY_DATES", "La salida debe ser posterior a la entrada.");
+    }
+    if (data.platform && !["En persona", "Airbnb", "Booking", "Otros"].includes(data.platform)) {
+      throw new HttpError(422, "INVALID_BOOKING_PLATFORM", "La plataforma de reserva no es válida.");
+    }
+    if (data.bookingStatus && !["Pendiente", "Confirmada", "Cancelada"].includes(data.bookingStatus)) {
+      throw new HttpError(422, "INVALID_BOOKING_STATUS", "El estado de la reserva no es válido.");
+    }
+    if (
+      data.luggageStorage &&
+      !["Por confirmar", "No", "Antes del check-in", "Después del check-out", "Antes y después"].includes(
+        data.luggageStorage,
+      )
+    ) {
+      throw new HttpError(422, "INVALID_LUGGAGE_STORAGE", "La opción para guardar maletas no es válida.");
+    }
+    if (data.cancellationDeadline && data.cancellationDeadline > data.checkInDate) {
+      throw new HttpError(
+        422,
+        "INVALID_CANCELLATION_DEADLINE",
+        "La fecha límite de cancelación no puede ser posterior a la entrada.",
+      );
+    }
+  }
+  if (
+    collection === "transports" && data.arrivalDate &&
+    (`${data.arrivalDate}T${data.arrivalTime || "23:59"}` <
+      `${data.departureDate}T${data.departureTime || "00:00"}`)
+  ) {
+    throw new HttpError(422, "INVALID_TRANSPORT_DATES", "La llegada no puede ser anterior a la salida.");
+  }
   if (collection === "inspirations") {
     const allowedFields = new Set(["url", "category", "note", "watched"]);
     if (Object.keys(data).some((field) => !allowedFields.has(field))) {
@@ -701,7 +1003,16 @@ function validateEntity(collection, data) {
     }
   }
   for (
-    const field of ["amount", "estimatedAmount", "actualAmount", "estimatedPrice", "actualPrice", "maxBudget", "price"]
+    const field of [
+      "amount",
+      "estimatedAmount",
+      "actualAmount",
+      "estimatedPrice",
+      "actualPrice",
+      "maxBudget",
+      "price",
+      "ticketPrice",
+    ]
   ) {
     if (data[field] !== undefined && (!Number.isFinite(Number(data[field])) || Number(data[field]) < 0)) {
       throw new HttpError(422, "INVALID_AMOUNT", "Los importes deben ser números positivos.");

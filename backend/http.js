@@ -13,12 +13,12 @@ export function json(data, status = 200, headers = {}) {
   return Response.json(data, { status, headers: { "cache-control": "no-store", ...headers } });
 }
 
-export async function body(request) {
+export async function body(request, maxBytes = CONFIG.maxBodyBytes) {
   const length = Number(request.headers.get("content-length") || 0);
-  if (length > CONFIG.maxBodyBytes) throw new HttpError(413, "BODY_TOO_LARGE", "La petición es demasiado grande.");
+  if (length > maxBytes) throw new HttpError(413, "BODY_TOO_LARGE", "La petición es demasiado grande.");
   try {
     const text = await request.text();
-    if (new TextEncoder().encode(text).byteLength > CONFIG.maxBodyBytes) {
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
       throw new HttpError(413, "BODY_TOO_LARGE", "La petición es demasiado grande.");
     }
     return JSON.parse(text);

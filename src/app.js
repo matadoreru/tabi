@@ -5,15 +5,18 @@ import {
   budgetSummary,
   dateRange,
   durationLabel,
+  findPlaceDuplicate,
   fundContributorOptions,
   googleMapsLinkSearch,
   groupTotals,
   inspirationLink,
   itineraryAnalysis,
   sharedInspirationLink,
+  stayNights,
 } from "./domain.js";
+import { EMOJI_GROUPS } from "./emojis.js";
 import { Store } from "./store.js";
-import { badge, emptyState, esc, formatDate, formatMoney, fullDate, icon, modal, toast } from "./ui.js";
+import { badge, emptyState, esc, formatDate, formatMoney, fullDate, icon, modal, searchKey, toast } from "./ui.js";
 import { apiClient, ApiError } from "./api-client.js";
 import { session } from "./session.js";
 import { PERMISSIONS, ROLE_LABELS } from "./permissions.js";
@@ -30,6 +33,7 @@ const ui = {
   filter: "Todos",
   authMode: "login",
   inspirationStatus: "Todos",
+  commitSha: "",
   busy: false,
 };
 
@@ -65,15 +69,25 @@ const DESCRIPTIONS = {
   settings: "Personaliza el viaje y protege tus datos",
 };
 
-const PLACE_MARKER_ICONS = ["📍", "⛩️", "🍜", "☕", "🛍️", "🏛️", "🌿", "🌇", "✨", "🎟️", "🏨", "🚉", "📸", "⭐"];
-
 const fields = {
   activity: [
     { name: "title", label: "Actividad", required: true, placeholder: "Ej. Visita a Kiyomizu-dera", full: true },
+    {
+      name: "activityKind",
+      label: "¿Qué vas a hacer?",
+      type: "select",
+      options: [
+        { value: "General", label: "Actividad general" },
+        { value: "Lugar", label: "Ir a un lugar guardado" },
+        { value: "Hospedaje", label: "Ir a un hospedaje" },
+        { value: "Transporte", label: "Tomar un transporte" },
+      ],
+      full: true,
+    },
     { name: "date", label: "Fecha", type: "date", required: true },
     {
       name: "type",
-      label: "Tipo",
+      label: "Categoría",
       type: "select",
       options: [
         "Visita",
@@ -145,8 +159,9 @@ const fields = {
     {
       name: "markerIcon",
       label: "Icono del mapa",
-      type: "select",
-      options: PLACE_MARKER_ICONS.map((value) => ({ value, label: `${value} Marcador` })),
+      type: "emoji",
+      options: EMOJI_GROUPS,
+      full: true,
     },
     { name: "status", label: "Estado", type: "select", options: ["Pendiente", "Planeado", "Visitado", "Descartado"] },
     { name: "description", label: "Descripción", type: "textarea", full: true },
@@ -155,6 +170,13 @@ const fields = {
     { name: "lng", label: "Longitud", type: "number", step: "any" },
     { name: "hours", label: "Horario" },
     { name: "estimatedPrice", label: "Precio estimado (¥)", type: "number", min: 0 },
+    {
+      name: "admission",
+      label: "Entrada",
+      type: "select",
+      options: ["No necesita entrada", "Entrada gratuita", "Entrada de pago", "Reserva obligatoria"],
+    },
+    { name: "ticketPrice", label: "Precio de la entrada (¥)", type: "number", min: 0 },
     { name: "duration", label: "Duración recomendada (min)", type: "number", min: 0 },
     { name: "priority", label: "Prioridad", type: "select", options: ["Imprescindible", "Alta", "Media", "Baja"] },
     { name: "assignedDate", label: "Día asignado", type: "date" },
@@ -218,6 +240,18 @@ const fields = {
   ],
   stay: [
     { name: "name", label: "Alojamiento", required: true, full: true },
+    {
+      name: "platform",
+      label: "Plataforma de reserva",
+      type: "select",
+      options: ["En persona", "Airbnb", "Booking", "Otros"],
+    },
+    {
+      name: "bookingStatus",
+      label: "Estado de la reserva",
+      type: "select",
+      options: ["Pendiente", "Confirmada", "Cancelada"],
+    },
     { name: "city", label: "Ciudad", required: true },
     { name: "address", label: "Dirección" },
     { name: "checkInDate", label: "Entrada", type: "date", required: true },
@@ -227,10 +261,24 @@ const fields = {
     { name: "price", label: "Precio total (¥)", type: "number", min: 0 },
     { name: "paymentStatus", label: "Pago", type: "select", options: ["Pendiente", "Parcial", "Pagado"] },
     { name: "reference", label: "Número de reserva" },
+    { name: "cancellationDeadline", label: "Cancelación gratuita hasta", type: "date" },
     { name: "contact", label: "Contacto" },
+    {
+      name: "luggageStorage",
+      label: "¿Permiten dejar maletas?",
+      type: "select",
+      options: ["Por confirmar", "No", "Antes del check-in", "Después del check-out", "Antes y después"],
+    },
+    { name: "luggageNotes", label: "Detalles sobre las maletas" },
     { name: "lat", label: "Latitud", type: "number", step: "any" },
     { name: "lng", label: "Longitud", type: "number", step: "any" },
-    { name: "link", label: "Enlace", type: "url", full: true },
+    {
+      name: "link",
+      label: "Enlace de la reserva / alojamiento",
+      type: "url",
+      placeholder: "https://…",
+      full: true,
+    },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
   transport: [
@@ -329,6 +377,11 @@ function resolvedFields(type, values = {}) {
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
+function addDaysIso(date, days) {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
 function activeDate() {
   const trip = store.activeTrip;
   const today = todayIso();
@@ -381,6 +434,14 @@ function navButton(route, label, iconName, mobile = false) {
   }<span>${label}</span></button>`;
 }
 
+function versionReference(className = "") {
+  const commit = ui.commitSha || "desconocida";
+  const shortCommit = ui.commitSha ? ui.commitSha.slice(0, 8) : commit;
+  return `<small class="app-version ${className}" title="Commit de la aplicación: ${esc(commit)}">versión <code>${
+    esc(shortCommit)
+  }</code></small>`;
+}
+
 function layout(content) {
   const trip = store.activeTrip;
   const addable = {
@@ -406,7 +467,9 @@ function layout(content) {
     NAV.map(([r, l, i]) => navButton(r, l, i)).join("")
   }</nav><div class="sidebar-foot"><div class="trip-mini"><span class="emoji">${trip.emoji}</span><span><strong>${
     esc(trip.name)
-  }</strong><small>${formatDate(trip.startDate)} — ${formatDate(trip.endDate)}</small></span></div></div></aside>
+  }</strong><small>${formatDate(trip.startDate)} — ${formatDate(trip.endDate)}</small></span></div>${
+    versionReference("app-version-sidebar")
+  }</div></aside>
     <main class="main"><header class="topbar"><div class="page-heading"><h1>${ROUTES[ui.route] || "Tabi"}</h1><p>${
     DESCRIPTIONS[ui.route] || ""
   }</p></div><div class="top-actions"><button class="avatar-stack desktop-only" data-route="settings" aria-label="Miembros del viaje">${
@@ -423,7 +486,9 @@ function layout(content) {
         icon("plus")
       }<span>Añadir ${addable.toLowerCase()}</span></button>`
       : ""
-  }</div></header><div class="content ${ui.route === "map" ? "content-map" : ""}">${content}</div></main>
+  }</div></header><div class="content ${ui.route === "map" ? "content-map" : ""}">${content}</div>${
+    versionReference("app-version-project-mobile")
+  }</main>
     <nav class="mobile-nav">${navButton("dashboard", "Inicio", "dashboard", true)}${
     navButton("itinerary", "Plan", "calendar", true)
   }${navButton("map", "Mapa", "map", true)}${navButton("budget", "Gastos", "wallet", true)}${
@@ -491,7 +556,9 @@ function renderAuth(error = "") {
       ui.busy ? "Un momento…" : register ? "Crear cuenta" : "Iniciar sesión"
     }</button></div></form><button class="btn btn-ghost" data-auth-mode="${register ? "login" : "register"}">${
       register ? "Ya tengo cuenta" : "Crear una cuenta"
-    }</button></section><aside class="auth-art"><div><h2>Planear juntos hace que el viaje empiece antes.</h2><p>Itinerario, presupuesto y reservas sincronizados para todo el equipo.</p></div></aside></main>`;
+    }</button></section><aside class="auth-art"><div><h2>Planear juntos hace que el viaje empiece antes.</h2><p>Itinerario, presupuesto y reservas sincronizados para todo el equipo.</p></div></aside>${
+      versionReference("app-version-auth")
+    }</main>`;
   bindAuth();
 }
 
@@ -550,7 +617,7 @@ function renderTripsDashboard() {
           past.map(tripCard).join("")
         }</div></section>`
         : ""
-    }</div></main>`;
+    }</div>${versionReference("app-version-page")}</main>`;
   bindTripDashboard();
 }
 
@@ -963,6 +1030,7 @@ function activityLogRow(log) {
     "member.role_changed": "cambió los permisos de un miembro",
     "trip.updated": "actualizó la configuración del viaje",
     "trip.imported": "importó los datos del viaje",
+    "trip.archive_imported": "importó un proyecto completo",
   };
   return `<div class="activity-row">${avatar({ name: log.userName, avatarUrl: log.avatarUrl })}<div><strong>${
     esc(log.userName)
@@ -970,18 +1038,73 @@ function activityLogRow(log) {
     relativeTime(log.createdAt)
   }</small></div></div>`;
 }
+function activityKindOf(item) {
+  return item.activityKind ||
+    (item.transportId ? "Transporte" : item.stayId ? "Hospedaje" : item.placeId ? "Lugar" : "General");
+}
+function activityDisplay(item) {
+  const kind = activityKindOf(item);
+  if (kind === "Lugar") {
+    const place = store.collection("places").find(({ id }) => id === item.placeId);
+    if (place) {
+      const admission = `${place.admission || "Entrada no indicada"}${
+        Number(place.ticketPrice || 0) ? ` · ${formatMoney(place.ticketPrice)}` : ""
+      }`;
+      return { kind, primary: place.name, secondary: [place.category, admission].filter(Boolean).join(" · ") };
+    }
+  }
+  if (kind === "Hospedaje") {
+    const stay = store.collection("stays").find(({ id }) => id === item.stayId);
+    if (stay) {
+      return {
+        kind,
+        primary: stay.name,
+        secondary: `Check-in ${formatDate(stay.checkInDate)} · ${stay.checkInTime || "hora por confirmar"} · Maletas: ${
+          (stay.luggageStorage || "Por confirmar").toLocaleLowerCase("es")
+        }${stay.luggageNotes ? ` (${stay.luggageNotes})` : ""}${stay.reference ? ` · Ref. ${stay.reference}` : ""}`,
+      };
+    }
+  }
+  if (kind === "Transporte") {
+    const transport = store.collection("transports").find(({ id }) => id === item.transportId);
+    if (transport) {
+      const arrival = transport.arrivalDate
+        ? ` · llega ${formatDate(transport.arrivalDate)} ${transport.arrivalTime || ""}`
+        : "";
+      const details = [
+        transport.operator,
+        transport.seat ? `Asiento ${transport.seat}` : "",
+        transport.reservation ? `Ref. ${transport.reservation}` : "",
+      ]
+        .filter(Boolean).join(" · ");
+      return {
+        kind,
+        primary: `${transport.type || "Transporte"} · ${transport.origin} → ${transport.destination}`,
+        secondary: `Sale ${formatDate(transport.departureDate)} ${
+          transport.departureTime || "hora por confirmar"
+        }${arrival}${details ? ` · ${details}` : ""}`,
+      };
+    }
+  }
+  return {
+    kind: "General",
+    primary: item.location || item.city || item.type || "Actividad general",
+    secondary: item.type && item.type !== "Otro" ? item.type : "",
+  };
+}
 function miniTimeline(items, showAction = true) {
   return items.length
     ? `<div class="timeline">${
-      items.slice(0, 5).map((item) =>
-        `<div class="timeline-item"><div class="timeline-time">${
+      items.slice(0, 5).map((item) => {
+        const display = activityDisplay(item);
+        return `<div class="timeline-item"><div class="timeline-time">${
           esc(item.start)
         }</div><div class="timeline-line"><span class="timeline-dot"></span></div><div class="timeline-info"><strong>${
           esc(item.title)
-        }</strong><small>${esc(item.location || item.city || item.type)} · ${
+        }</strong><small>${esc(display.primary)} · ${
           durationLabel(timeDiff(item.start, item.end))
-        }</small></div></div>`
-      ).join("")
+        }</small></div></div>`;
+      }).join("")
     }</div>`
     : emptyState(
       "Un día libre",
@@ -998,11 +1121,15 @@ function timeDiff(start, end) {
 
 function activitiesForDate(date) {
   const activities = store.collection("activities").filter((item) => item.date === date);
+  const linkedStayIds = new Set(activities.map(({ stayId }) => stayId).filter(Boolean));
+  const linkedTransportIds = new Set(activities.map(({ transportId }) => transportId).filter(Boolean));
   const stays = store.collection("stays").flatMap((stay) => [
-    ...(stay.checkInDate === date
+    ...(stay.checkInDate === date && !linkedStayIds.has(stay.id)
       ? [{
         id: `virtual-in-${stay.id}`,
         virtual: true,
+        activityKind: "Hospedaje",
+        stayId: stay.id,
         title: `Check-in · ${stay.name}`,
         date,
         start: stay.checkInTime || "15:00",
@@ -1012,10 +1139,12 @@ function activitiesForDate(date) {
         location: stay.address,
       }]
       : []),
-    ...(stay.checkOutDate === date
+    ...(stay.checkOutDate === date && !linkedStayIds.has(stay.id)
       ? [{
         id: `virtual-out-${stay.id}`,
         virtual: true,
+        activityKind: "Hospedaje",
+        stayId: stay.id,
         title: `Check-out · ${stay.name}`,
         date,
         start: stay.checkOutTime || "11:00",
@@ -1026,9 +1155,13 @@ function activitiesForDate(date) {
       }]
       : []),
   ]);
-  const transports = store.collection("transports").filter((item) => item.departureDate === date).map((item) => ({
+  const transports = store.collection("transports").filter((item) =>
+    item.departureDate === date && !linkedTransportIds.has(item.id)
+  ).map((item) => ({
     id: `virtual-trans-${item.id}`,
     virtual: true,
+    activityKind: "Transporte",
+    transportId: item.id,
     title: `${item.type} · ${item.origin} → ${item.destination}`,
     date,
     start: item.departureTime,
@@ -1091,19 +1224,22 @@ function renderItinerary() {
     }</div>`;
   } else {body = `<div class="planner-layout"><section class="card planner">${
       analysis.sorted.length
-        ? analysis.sorted.map((item) =>
-          `<div class="planner-event"><div class="planner-time">${esc(item.start)}<br><small>${
+        ? analysis.sorted.map((item) => {
+          const display = activityDisplay(item);
+          return `<div class="planner-event"><div class="planner-time">${esc(item.start)}<br><small>${
             esc(item.end)
           }</small></div><div class="event-card ${conflictIds.has(item.id) ? "conflict" : ""}" ${
             item.virtual ? "" : `draggable="true" data-drag-id="${item.id}"`
           } data-edit-activity="${item.id}"><span class="drag-handle">${
             item.virtual ? "•" : "⋮⋮"
-          }</span><div class="event-body"><strong>${esc(item.title)}</strong><small>${
-            esc(item.location || item.city || item.type)
-          } · ${durationLabel(timeDiff(item.start, item.end))}</small></div>${activityMapsButton(item)}${
-            item.virtual ? badge("Sincronizado", "blue") : badge(item.status === "done" ? "Realizado" : item.type)
-          }</div></div>`
-        ).join("")
+          }</span><div class="event-body"><strong>${esc(item.title)}</strong><small>${esc(display.primary)} · ${
+            durationLabel(timeDiff(item.start, item.end))
+          }</small>${display.secondary ? `<span class="event-context">${esc(display.secondary)}</span>` : ""}</div>${
+            activityMapsButton(item)
+          }${
+            item.virtual ? badge("Sincronizado", "blue") : badge(item.status === "done" ? "Realizado" : display.kind)
+          }</div></div>`;
+        }).join("")
         : emptyState(
           "Este día está por escribir",
           "Añade una actividad o conserva el espacio para improvisar.",
@@ -1159,7 +1295,9 @@ function renderPlaces() {
         badge(place.priority, place.priority === "Alta" || place.priority === "Imprescindible" ? "red" : "")
       }</span></div><div class="place-body"><h3>${esc(place.name)}</h3><p>${
         esc(place.description || "Sin descripción")
-      }</p><div class="place-meta"><span>${icon("pin")} ${esc(place.city)} · ${
+      }</p><div class="place-admission">${badge(place.admission || "Entrada no indicada", "blue")}${
+        Number(place.ticketPrice || 0) ? `<strong>${formatMoney(place.ticketPrice)}</strong>` : ""
+      }</div><div class="place-meta"><span>${icon("pin")} ${esc(place.city)} · ${
         esc(place.area)
       }</span><button class="btn btn-ghost icon-btn" data-edit="places:${place.id}">${
         icon("edit")
@@ -1359,7 +1497,10 @@ function initializePlaceLinkImport(root) {
       };
       Object.entries(values).forEach(([name, value]) => {
         const field = root.querySelector(`#field-${name}`);
-        if (field) field.value = value;
+        if (field) {
+          field.value = value;
+          field.dispatchEvent(new Event("input", { bubbles: true }));
+        }
       });
       toast("Datos del lugar completados");
     } catch (error) {
@@ -1371,49 +1512,260 @@ function initializePlaceLinkImport(root) {
   });
 }
 
+function initializePlaceDuplicateCheck(root, item) {
+  const nameInput = root.querySelector("#field-name");
+  const cityInput = root.querySelector("#field-city");
+  const linkInput = root.querySelector("#field-link");
+  if (!nameInput || !cityInput || !linkInput) return;
+  const message = document.createElement("div");
+  message.className = "duplicate-warning";
+  message.hidden = true;
+  linkInput.closest("[data-field]")?.insertAdjacentElement("afterend", message);
+  const check = () => {
+    nameInput.setCustomValidity("");
+    linkInput.setCustomValidity("");
+    const duplicate = findPlaceDuplicate(
+      { name: nameInput.value, city: cityInput.value, link: linkInput.value },
+      store.collection("places"),
+      item?.id,
+    );
+    message.hidden = !duplicate;
+    if (!duplicate) return;
+    const reason = duplicate.reason === "link" ? "el mismo enlace de Google Maps" : "el mismo nombre y ciudad";
+    message.innerHTML = `${icon("alert")}<span><strong>Posible duplicado:</strong> ya existe ${
+      esc(duplicate.place.name)
+    } con ${reason}.</span>`;
+    (duplicate.reason === "link" ? linkInput : nameInput).setCustomValidity("Este lugar ya está guardado.");
+  };
+  [nameInput, cityInput, linkInput].forEach((input) => input.addEventListener("input", check));
+  check();
+}
+
+function initializePlaceEditor(root, item) {
+  initializePlaceLinkImport(root);
+  initializePlaceDuplicateCheck(root, item);
+}
+
 function initializeActivityLinks(root) {
-  const typeInput = root.querySelector("#field-type");
+  const kindInput = root.querySelector("#field-activityKind");
   const stayInput = root.querySelector("#field-stayId");
   const transportInput = root.querySelector("#field-transportId");
-  if (!typeInput || !stayInput || !transportInput) return;
+  const placeInput = root.querySelector("#field-placeId");
+  if (!kindInput || !stayInput || !transportInput || !placeInput) return;
 
+  const placeField = root.querySelector('[data-field="placeId"]');
   const stayField = root.querySelector('[data-field="stayId"]');
   const transportField = root.querySelector('[data-field="transportId"]');
+  const generalFields = ["type", "city", "location", "mapsUrl"].map((name) =>
+    root.querySelector(`[data-field="${name}"]`)
+  );
   const setValue = (name, value) => {
     const input = root.querySelector(`#field-${name}`);
     if (input && value !== undefined && value !== null && value !== "") input.value = value;
   };
-  const updateLinkedFields = () => {
-    stayField.hidden = typeInput.value !== "Hospedaje";
-    transportField.hidden = typeInput.value !== "Trayecto";
+  const updateLinkedFields = (clearOthers = false) => {
+    const kind = kindInput.value;
+    placeField.hidden = kind !== "Lugar";
+    stayField.hidden = kind !== "Hospedaje";
+    transportField.hidden = kind !== "Transporte";
+    generalFields.forEach((field) => field.hidden = kind !== "General");
+    placeInput.required = kind === "Lugar";
+    stayInput.required = kind === "Hospedaje";
+    transportInput.required = kind === "Transporte";
+    if (kind !== "Lugar") root.querySelector("[data-quick-place]")?.setAttribute("hidden", "");
+    if (clearOthers) {
+      if (kind !== "Lugar") placeInput.value = "";
+      if (kind !== "Hospedaje") stayInput.value = "";
+      if (kind !== "Transporte") transportInput.value = "";
+    }
   };
 
-  typeInput.addEventListener("change", updateLinkedFields);
+  kindInput.addEventListener("change", () => updateLinkedFields(true));
   stayInput.addEventListener("change", () => {
     const stay = store.collection("stays").find((item) => item.id === stayInput.value);
     if (!stay) return;
-    setValue("title", `Dormir · ${stay.name}`);
+    const title = root.querySelector("#field-title");
+    if (title && !title.value.trim()) title.value = `Check-in · ${stay.name}`;
     setValue("date", stay.checkInDate);
-    setValue("start", "22:00");
-    const start = "22:00";
-    setValue("end", start < "23:00" ? addMinutes(start, 60) : "23:59");
+    const start = stay.checkInTime || "15:00";
+    setValue("start", start);
+    setValue("end", start < "23:30" ? addMinutes(start, 30) : "23:59");
     setValue("city", stay.city);
     setValue("location", stay.address || stay.name);
-    setValue("mapsUrl", stay.link);
+    root.querySelector("#field-mapsUrl").value = "";
   });
   transportInput.addEventListener("change", () => {
     const transport = store.collection("transports").find((item) => item.id === transportInput.value);
     if (!transport) return;
     const start = transport.departureTime || "09:00";
     const sameDayArrival = transport.arrivalDate === transport.departureDate && transport.arrivalTime > start;
-    setValue("title", `${transport.type || "Trayecto"} · ${transport.origin} → ${transport.destination}`);
+    const title = root.querySelector("#field-title");
+    if (title && !title.value.trim()) {
+      title.value = `${transport.type || "Trayecto"} · ${transport.origin} → ${transport.destination}`;
+    }
     setValue("date", transport.departureDate);
     setValue("start", start);
     setValue("end", sameDayArrival ? transport.arrivalTime : start < "23:00" ? addMinutes(start, 60) : "23:59");
     setValue("city", transport.origin);
     setValue("location", transport.operator || `${transport.origin} → ${transport.destination}`);
+    root.querySelector("#field-mapsUrl").value = "";
+  });
+  const choosePlace = (place) => {
+    let option = [...placeInput.options].find(({ value }) => value === place.id);
+    if (!option) {
+      option = new Option(place.name, place.id);
+      placeInput.add(option);
+    }
+    placeInput.value = place.id;
+    const title = root.querySelector("#field-title");
+    if (title && !title.value.trim()) title.value = `Visita · ${place.name}`;
+    root.querySelector("#field-location").value = place.name || "";
+    root.querySelector("#field-city").value = place.city || "";
+    root.querySelector("#field-mapsUrl").value = "";
+  };
+  placeInput.addEventListener("change", () => {
+    const place = store.collection("places").find(({ id }) => id === placeInput.value);
+    if (place) choosePlace(place);
+  });
+
+  placeField?.insertAdjacentHTML(
+    "beforeend",
+    `<button class="btn btn-secondary quick-place-toggle" type="button" data-quick-place-toggle>${
+      icon("plus")
+    } Crear un lugar sin salir</button>`,
+  );
+  placeField?.insertAdjacentHTML(
+    "afterend",
+    `<section class="quick-place full" data-quick-place hidden><div class="quick-place-head"><div><strong>Nuevo lugar</strong><span>Se guardará y quedará vinculado a esta actividad.</span></div><button class="btn btn-ghost icon-btn" type="button" data-quick-place-close aria-label="Cerrar">${
+      icon("close")
+    }</button></div><div class="form-grid"><div class="field full"><label for="quick-place-name">Nombre *</label><input id="quick-place-name" type="text" placeholder="Ej. Sensō-ji"></div><div class="field"><label for="quick-place-city">Ciudad *</label><input id="quick-place-city" type="text" placeholder="Tokio"></div><div class="field"><label for="quick-place-link">Google Maps</label><input id="quick-place-link" type="text" inputmode="url" placeholder="https://maps.app.goo.gl/…"></div></div><div class="quick-place-actions"><button class="btn btn-secondary" type="button" data-quick-place-import>${
+      icon("map")
+    } Obtener datos</button><button class="btn btn-primary" type="button" data-quick-place-save>${
+      icon("plus")
+    } Crear y vincular</button></div></section>`,
+  );
+  const quickPanel = root.querySelector("[data-quick-place]");
+  const quickName = root.querySelector("#quick-place-name");
+  const quickCity = root.querySelector("#quick-place-city");
+  const quickLink = root.querySelector("#quick-place-link");
+  let importedValues = {};
+  quickLink.addEventListener("input", () => importedValues = {});
+  const toggleQuickPlace = (open) => {
+    quickPanel.hidden = !open;
+    if (open) {
+      quickName.value ||= root.querySelector("#field-location")?.value || root.querySelector("#field-title")?.value ||
+        "";
+      quickCity.value ||= root.querySelector("#field-city")?.value || "";
+      quickLink.value ||= root.querySelector("#field-mapsUrl")?.value || "";
+      quickName.focus();
+    }
+  };
+  root.querySelector("[data-quick-place-toggle]")?.addEventListener("click", () => toggleQuickPlace(true));
+  root.querySelector("[data-quick-place-close]")?.addEventListener("click", () => toggleQuickPlace(false));
+  root.querySelector("[data-quick-place-import]")?.addEventListener("click", async (event) => {
+    if (!quickLink.value.trim()) return toast("Pega primero un enlace de Google Maps.", "error");
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const { place, resolved } = await googlePlaceFromLink(quickLink.value);
+      const category = googlePlaceCategory(place.primaryType);
+      importedValues = {
+        category,
+        markerIcon: placeEmoji(category),
+        address: place.formattedAddress || "",
+        hours: place.regularOpeningHours?.weekdayDescriptions?.join(" · ") || "",
+        lat: place.location.lat(),
+        lng: place.location.lng(),
+      };
+      quickName.value = place.displayName || quickName.value;
+      quickCity.value = googlePlaceCity(place) || quickCity.value;
+      quickLink.value = place.googleMapsURI || resolved;
+      toast("Datos del lugar completados");
+    } catch (error) {
+      toast(error.message || "No se han podido obtener los datos.", "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
+  root.querySelector("[data-quick-place-save]")?.addEventListener("click", async (event) => {
+    const candidate = {
+      name: quickName.value.trim(),
+      city: quickCity.value.trim(),
+      link: quickLink.value.trim(),
+      status: "Pendiente",
+      priority: "Media",
+      duration: 60,
+      markerIcon: "📍",
+      ...importedValues,
+    };
+    if (!candidate.name || !candidate.city) return toast("Indica el nombre y la ciudad del lugar.", "error");
+    const existing = findPlaceDuplicate(candidate, store.collection("places"));
+    if (existing) {
+      choosePlace(existing.place);
+      toggleQuickPlace(false);
+      return toast(`Ya existía “${existing.place.name}”; lo hemos vinculado.`);
+    }
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const place = await store.add("places", candidate);
+      choosePlace(place);
+      toggleQuickPlace(false);
+      toast("Lugar creado y vinculado");
+    } catch (error) {
+      const duplicate = error instanceof ApiError && error.code === "PLACE_EXISTS"
+        ? store.collection("places").find(({ id }) => id === error.details?.duplicateId)
+        : null;
+      if (duplicate) {
+        choosePlace(duplicate);
+        toggleQuickPlace(false);
+        toast(`Ya existía “${duplicate.name}”; lo hemos vinculado.`);
+      } else toast(error.message || "No se ha podido crear el lugar.", "error");
+    } finally {
+      button.disabled = false;
+    }
   });
   updateLinkedFields();
+}
+
+function initializeStayFields(root) {
+  const checkIn = root.querySelector("#field-checkInDate");
+  const checkOut = root.querySelector("#field-checkOutDate");
+  const platform = root.querySelector("#field-platform");
+  const link = root.querySelector("#field-link");
+  checkIn?.addEventListener("change", () => {
+    if (checkIn.value && (!checkOut.value || checkOut.value < checkIn.value)) {
+      checkOut.value = addDaysIso(checkIn.value, 1);
+    }
+  });
+  platform?.addEventListener("change", () => {
+    if (!link) return;
+    link.placeholder = platform.value === "Airbnb"
+      ? "https://www.airbnb.es/trips/…"
+      : platform.value === "Booking"
+      ? "https://secure.booking.com/…"
+      : "https://…";
+  });
+  platform?.dispatchEvent(new Event("change"));
+}
+
+function initializeTransportFields(root) {
+  const departureDate = root.querySelector("#field-departureDate");
+  const departureTime = root.querySelector("#field-departureTime");
+  const arrivalDate = root.querySelector("#field-arrivalDate");
+  const arrivalTime = root.querySelector("#field-arrivalTime");
+  const duration = root.querySelector("#field-duration");
+  const calculate = () => {
+    if (!departureDate.value || !departureTime.value || !arrivalDate.value || !arrivalTime.value) return;
+    const minutes = Math.round(
+      (Date.parse(`${arrivalDate.value}T${arrivalTime.value}:00Z`) -
+        Date.parse(`${departureDate.value}T${departureTime.value}:00Z`)) / 60000,
+    );
+    if (minutes >= 0) duration.value = minutes;
+  };
+  [departureDate, departureTime, arrivalDate, arrivalTime].forEach((input) =>
+    input?.addEventListener("change", calculate)
+  );
 }
 
 async function initializeGoogleMap() {
@@ -1447,13 +1799,28 @@ async function initializeGoogleMap() {
   const bounds = new google.maps.LatLngBounds();
   const infoWindow = new InfoWindow({ maxWidth: 320 });
   const markers = new globalThis.Map();
+  const clearSelectedPlace = () => {
+    ui.mapPlaceId = "";
+    markers.forEach(({ content }) => content.classList.remove("selected"));
+    document.querySelectorAll("[data-map-place]").forEach((button) => button.classList.remove("active"));
+    document.querySelectorAll("[data-map-selected]").forEach((host) => {
+      host.hidden = true;
+      host.innerHTML = "";
+    });
+    infoWindow.close();
+  };
   const selectPlace = (place, marker) => {
     ui.mapPlaceId = place.id;
     markers.forEach((item, id) => item.content.classList.toggle("selected", id === place.id));
     document.querySelectorAll("[data-map-place]").forEach((button) =>
       button.classList.toggle("active", button.dataset.mapPlace === place.id)
     );
-    document.querySelectorAll("[data-map-selected]").forEach((host) => host.innerHTML = mapSelectedDetails(place));
+    const selectedRow = document.querySelector(`[data-map-place="${place.id}"]`);
+    selectedRow?.parentElement?.prepend(selectedRow);
+    document.querySelectorAll("[data-map-selected]").forEach((host) => {
+      host.hidden = false;
+      host.innerHTML = mapSelectedDetails(place);
+    });
     document.querySelectorAll("[data-map-selected] [data-edit]").forEach((button) =>
       button.addEventListener("click", () => openEditor("places", place.id))
     );
@@ -1466,6 +1833,11 @@ async function initializeGoogleMap() {
     map.panTo(marker.position);
     setMapSidebarOpen(false);
   };
+  map.addListener("click", (event) => {
+    event.stop?.();
+    clearSelectedPlace();
+  });
+  infoWindow.addListener("closeclick", clearSelectedPlace);
   places.forEach((place) => {
     const position = { lat: place.lat, lng: place.lng };
     bounds.extend(position);
@@ -1563,14 +1935,19 @@ async function initializeGoogleMap() {
 
 function renderMap() {
   const places = store.collection("places").filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
-  const selected = places.find((p) => p.id === ui.mapPlaceId) || places[0];
-  if (selected) ui.mapPlaceId = selected.id;
+  const selected = places.find((p) => p.id === ui.mapPlaceId) || null;
+  if (!selected) ui.mapPlaceId = "";
+  const orderedPlaces = selected ? [selected, ...places.filter((place) => place.id !== selected.id)] : places;
   return `<section class="card map-layout"><aside class="map-sidebar ${
     ui.mapSidebarOpen ? "open" : ""
   }"><div class="map-sidebar-head"><strong>Explorar lugares</strong><button class="btn btn-ghost icon-btn" type="button" data-map-panel-close aria-label="Cerrar lista">${
     icon("close")
-  }</button></div><div id="google-place-search" class="google-place-search"><span class="cell-sub">Cargando buscador…</span></div><div id="google-place-preview"></div><div class="map-saved-head"><strong>Sitios guardados</strong><span>${places.length}</span></div><div class="item-list map-place-list">${
-    places.map((p) =>
+  }</button></div><div id="google-place-search" class="google-place-search"><span class="cell-sub">Cargando buscador…</span></div><div id="google-place-preview"></div><div class="map-selected" data-map-selected ${
+    selected ? "" : "hidden"
+  }>${
+    mapSelectedDetails(selected)
+  }</div><div class="map-saved-head"><strong>Sitios guardados</strong><span>${places.length}</span></div><div class="item-list map-place-list">${
+    orderedPlaces.map((p) =>
       `<button class="list-item ${
         p.id === selected?.id ? "active" : ""
       }" style="cursor:pointer;text-align:left;color:inherit" data-map-place="${p.id}"><span class="map-list-icon">${
@@ -1579,15 +1956,13 @@ function renderMap() {
         esc(p.area)
       }</small></span>${icon("chevron")}</button>`
     ).join("") || `<p class="cell-sub">Busca un sitio arriba para añadirlo al viaje.</p>`
-  }</div><div class="map-selected" data-map-selected>${
-    mapSelectedDetails(selected)
   }</div></aside><button class="map-drawer-backdrop ${
     ui.mapSidebarOpen ? "open" : ""
   }" type="button" data-map-panel-close aria-label="Cerrar lista de lugares"></button><div class="map-stage"><button class="btn btn-secondary map-panel-toggle" type="button" data-map-panel-toggle aria-expanded="${ui.mapSidebarOpen}">${
     icon("menu")
-  } Lugares (${places.length})</button><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div><div class="map-mobile-selected" data-map-selected>${
-    mapSelectedDetails(selected)
-  }</div></div></section>`;
+  } Lugares (${places.length})</button><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div><div class="map-mobile-selected" data-map-selected ${
+    selected ? "" : "hidden"
+  }>${mapSelectedDetails(selected)}</div></div></section>`;
 }
 
 function toolbar(filters = [], extra = "") {
@@ -1602,10 +1977,10 @@ function toolbar(filters = [], extra = "") {
   }${extra}</div>`;
 }
 function filtered(items, keys) {
-  const query = ui.query.trim().toLowerCase();
+  const query = searchKey(ui.query);
   return items.filter((item) =>
     (ui.filter === "Todos" || Object.values(item).includes(ui.filter)) &&
-    (!query || keys.some((key) => String(item[key] || "").toLowerCase().includes(query)))
+    (!query || keys.some((key) => searchKey(item[key]).includes(query)))
   );
 }
 function table(headers, rows, emptyTitle = "No hay datos") {
@@ -1619,6 +1994,13 @@ function actions(collection, id) {
   return `<div class="row-actions"><button class="btn btn-ghost icon-btn" data-edit="${collection}:${id}" aria-label="Editar">${
     icon("edit")
   }</button></div>`;
+}
+function copyReferenceButton(collection, item, field = "reference") {
+  return item[field]
+    ? `<button class="btn btn-ghost icon-btn" type="button" data-copy-reference="${collection}:${item.id}:${field}" aria-label="Copiar referencia" title="Copiar referencia">${
+      icon("file")
+    }</button>`
+    : "";
 }
 
 function renderPurchases() {
@@ -1743,29 +2125,76 @@ function renderBudget() {
 }
 
 function renderStays() {
-  const items = filtered(store.collection("stays"), ["name", "city", "address", "reference"]);
-  return `${toolbar()}<div class="grid grid-2">${
-    items.map((i) =>
-      `<section class="card card-pad"><div class="card-head"><div><h2>${esc(i.name)}</h2><p>${icon("pin")} ${
-        esc(i.city)
-      } · ${esc(i.address)}</p></div>${
-        badge(i.paymentStatus)
+  const items = filtered(store.collection("stays"), ["name", "city", "address", "reference", "platform", "contact"])
+    .sort((a, b) =>
+      `${a.checkInDate || "9999"}${a.checkInTime || ""}`.localeCompare(
+        `${b.checkInDate || "9999"}${b.checkInTime || ""}`,
+      )
+    );
+  return `${
+    toolbar(["Todos", "En persona", "Airbnb", "Booking", "Otros", "Pendiente", "Confirmada", "Cancelada"])
+  }<div class="grid grid-2">${
+    items.map((i) => {
+      const nights = stayNights(i);
+      const cancellationExpired = i.cancellationDeadline && i.cancellationDeadline < todayIso();
+      const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${
+        encodeURIComponent(
+          [i.address, i.city].filter(Boolean).join(", "),
+        )
+      }`;
+      return `<section class="card card-pad stay-card"><div class="card-head"><div><div class="stay-badges">${
+        badge(i.platform || "Otros", "blue")
+      } ${badge(i.bookingStatus || "Pendiente")}</div><h2>${esc(i.name)}</h2><p>${icon("pin")} ${esc(i.city)}${
+        i.address ? ` · ${esc(i.address)}` : ""
+      }</p></div>${
+        badge(i.paymentStatus || "Pendiente")
       }</div><div class="grid grid-2"><div><span class="cell-sub">ENTRADA</span><strong>${
         formatDate(i.checkInDate)
-      } · ${esc(i.checkInTime)}</strong></div><div><span class="cell-sub">SALIDA</span><strong>${
+      } · ${esc(i.checkInTime || "—")}</strong></div><div><span class="cell-sub">SALIDA</span><strong>${
         formatDate(i.checkOutDate)
-      } · ${esc(i.checkOutTime)}</strong></div></div><div class="progress" style="margin:18px 0"><span style="width:${
-        i.paymentStatus === "Pagado" ? 100 : i.paymentStatus === "Parcial" ? 50 : 5
-      }%"></span></div><div class="place-meta"><span>${formatMoney(i.price)} · Ref. ${
-        esc(i.reference || "—")
-      }</span><button class="btn btn-secondary" data-edit="stays:${i.id}">${
+      } · ${esc(i.checkOutTime || "—")}</strong></div></div><div class="stay-summary"><strong>${nights} ${
+        nights === 1 ? "noche" : "noches"
+      }</strong><span>${formatMoney(i.price)}${
+        nights ? ` · ${formatMoney(Number(i.price || 0) / nights)} / noche` : ""
+      }</span></div>${
+        i.cancellationDeadline
+          ? `<div class="stay-cancellation ${cancellationExpired ? "expired" : ""}">${icon("clock")} ${
+            cancellationExpired ? "El plazo de cancelación terminó el" : "Cancelación gratuita hasta"
+          } ${formatDate(i.cancellationDeadline)}</div>`
+          : ""
+      }<div class="stay-details"><span>Ref. <strong>${esc(i.reference || "—")}</strong></span>${
+        i.contact ? `<span>Contacto: ${esc(i.contact)}</span>` : ""
+      }<span>Maletas: ${esc((i.luggageStorage || "Por confirmar").toLocaleLowerCase("es"))}${
+        i.luggageNotes ? ` · ${esc(i.luggageNotes)}` : ""
+      }</span></div><div class="stay-actions">${
+        i.link
+          ? `<a class="btn btn-secondary" href="${esc(i.link)}" target="_blank" rel="noreferrer">${
+            icon("external")
+          } Abrir reserva</a>`
+          : ""
+      }${
+        i.address || i.city
+          ? `<a class="btn btn-secondary" href="${esc(mapsUrl)}" target="_blank" rel="noreferrer">${
+            icon("map")
+          } Cómo llegar</a>`
+          : ""
+      }${
+        i.reference
+          ? `<span class="stay-copy-reference">${copyReferenceButton("stays", i)} Copiar referencia</span>`
+          : ""
+      }<button class="btn btn-ghost icon-btn" data-edit="stays:${i.id}" aria-label="Editar alojamiento">${
         icon("edit")
-      } Editar</button></div></section>`
-    ).join("") || emptyState("Sin alojamiento", "Añade un hotel, apartamento u otro alojamiento.")
+      }</button></div></section>`;
+    }).join("") || emptyState("Sin alojamiento", "Añade un hotel, apartamento u otro alojamiento.")
   }</div>`;
 }
 function renderTransport() {
-  const items = filtered(store.collection("transports"), ["type", "operator", "origin", "destination"]);
+  const items = filtered(store.collection("transports"), ["type", "operator", "origin", "destination"])
+    .sort((a, b) =>
+      `${a.departureDate || "9999"}${a.departureTime || ""}`.localeCompare(
+        `${b.departureDate || "9999"}${b.departureTime || ""}`,
+      )
+    );
   return `${toolbar(["Todos", ...CATEGORIES.transport])}${
     table(
       ["Trayecto", "Salida", "Llegada", "Duración", "Reserva", "Estado"],
@@ -1778,25 +2207,26 @@ function renderTransport() {
           formatDate(i.arrivalDate)
         }<span class="cell-sub">${esc(i.arrivalTime)}</span></td><td>${durationLabel(i.duration)}</td><td>${
           esc(i.reservation || "Sin referencia")
-        }<span class="cell-sub">${esc(i.seat || "")}</span></td><td>${badge(i.status)}</td><td>${
-          actions("transports", i.id)
-        }</td></tr>`
+        }${copyReferenceButton("transports", i, "reservation")}<span class="cell-sub">${esc(i.seat || "")}</span>${
+          i.link ? `<a class="cell-link" href="${esc(i.link)}" target="_blank" rel="noreferrer">Abrir reserva</a>` : ""
+        }</td><td>${badge(i.status)}</td><td>${actions("transports", i.id)}</td></tr>`
       ),
       "No hay transportes",
     )
   }`;
 }
 function renderReservations() {
-  const items = filtered(store.collection("reservations"), ["title", "type", "reference"]);
+  const items = filtered(store.collection("reservations"), ["title", "type", "reference"])
+    .sort((a, b) => `${a.date || "9999"}${a.time || ""}`.localeCompare(`${b.date || "9999"}${b.time || ""}`));
   return `${toolbar(["Todos", "Hotel", "Restaurante", "Museo", "Actividad", "Transporte", "Entrada"])}${
     table(
       ["Reserva", "Fecha y hora", "Referencia", "Pago", "Estado", "Documento"],
       items.map((i) =>
         `<tr><td><span class="cell-main">${esc(i.title)}</span><span class="cell-sub">${esc(i.type)}</span></td><td>${
           formatDate(i.date)
-        } · ${esc(i.time || "—")}</td><td>${esc(i.reference || "—")}</td><td>${badge(i.paymentStatus)}</td><td>${
-          badge(i.status)
-        }</td><td>${
+        } · ${esc(i.time || "—")}</td><td>${esc(i.reference || "—")}${copyReferenceButton("reservations", i)}</td><td>${
+          badge(i.paymentStatus)
+        }</td><td>${badge(i.status)}</td><td>${
           i.link
             ? `<a class="btn btn-ghost" target="_blank" rel="noreferrer" href="${esc(i.link)}">${
               icon("external")
@@ -1912,6 +2342,17 @@ function renderSettings() {
   }</strong></div><div><span class="cell-sub">TU ROL</span><strong>${
     ROLE_LABELS[session.currentMembership.role]
   }</strong></div></div></section>
+      <section class="card card-pad project-transfer"><div class="card-head"><div><h2>Exportar e importar proyecto</h2><p>Copia completa editable en formato JSON</p></div><span class="stat-icon amber">${
+    icon("download")
+  }</span></div><p class="cell-sub">Incluye la configuración del viaje y todas sus actividades, lugares, tareas, presupuesto, fondos, alojamientos, transportes, reservas, documentos e inspiración. No incluye cuentas, miembros, invitaciones ni contraseñas.</p><div class="project-transfer-actions"><button class="btn btn-secondary" type="button" data-export-project>${
+    icon("download")
+  } Exportar para ChatGPT</button>${
+    session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-primary" type="button" data-import-project>${
+        icon("upload")
+      } Importar cambios</button><input type="file" accept="application/json,.json" data-project-file hidden>`
+      : ""
+  }</div><span class="field-help">Al importar, el contenido del viaje se sustituye por el del archivo; los miembros y permisos se conservan.</span></section>
       <section class="card card-pad"><div class="card-head"><div><h2>Miembros</h2><p>${members.length} personas participan en este viaje</p></div>${
     session.can(PERMISSIONS.MEMBER_INVITE)
       ? `<button class="btn btn-primary" data-new-invite>${icon("plus")} Crear enlace</button>`
@@ -2037,27 +2478,74 @@ function openEditor(collection, idValue) {
   const item = idValue ? store.collection(collection).find((i) => i.id === idValue) : null;
   const [type, label] = config;
   const defaults = {
-    activity: { date: activeDate(), start: "09:00", end: "10:00", status: "planned" },
-    place: { status: "Pendiente", priority: "Media", duration: 60, markerIcon: "📍" },
+    activity: { activityKind: "General", date: activeDate(), start: "09:00", end: "10:00", status: "planned" },
+    place: {
+      status: "Pendiente",
+      priority: "Media",
+      duration: 60,
+      markerIcon: "📍",
+      admission: "No necesita entrada",
+    },
     task: { phase: "Antes", priority: "Media", status: "Pendiente" },
     purchase: { status: "Pendiente", priority: "Media", actualPrice: 0 },
     expense: { date: todayIso(), currency: "JPY", paymentStatus: "Pendiente", person: "Ambos" },
     fund: { title: "Aportación", contributor: session.currentUser.name, date: todayIso(), currency: "JPY" },
-    stay: { checkInTime: "15:00", checkOutTime: "11:00", paymentStatus: "Pendiente" },
+    stay: {
+      checkInDate: activeDate(),
+      checkOutDate: addDaysIso(activeDate(), 1),
+      checkInTime: "15:00",
+      checkOutTime: "11:00",
+      platform: "Otros",
+      bookingStatus: "Pendiente",
+      paymentStatus: "Pendiente",
+      luggageStorage: "Por confirmar",
+    },
     transport: { departureDate: activeDate(), arrivalDate: activeDate(), status: "Por reservar" },
     reservation: { date: activeDate(), status: "Pendiente", paymentStatus: "Pendiente" },
     inspiration: {},
     document: { type: "Confirmación" },
   }[type] || {};
+  const editorValues = item && type === "activity" && !item.activityKind
+    ? { ...item, activityKind: activityKindOf(item) }
+    : item || defaults;
   modal({
     title: item ? `Editar ${label.toLowerCase()}` : `Nuevo ${label.toLowerCase()}`,
-    fields: resolvedFields(type, item || defaults),
-    values: item || defaults,
+    fields: resolvedFields(type, editorValues),
+    values: editorValues,
     dangerLabel: item ? "Eliminar" : "",
     onSubmit: async (values) => {
+      const requiredLink = { Lugar: "placeId", Hospedaje: "stayId", Transporte: "transportId" }[values.activityKind];
+      if (type === "activity" && requiredLink && !values[requiredLink]) {
+        throw new Error(
+          `Selecciona ${
+            values.activityKind === "Lugar"
+              ? "un lugar"
+              : values.activityKind === "Hospedaje"
+              ? "un hospedaje"
+              : "un transporte"
+          } guardado.`,
+        );
+      }
       if (type === "activity" && values.end <= values.start) {
-        toast("La hora final debe ser posterior a la inicial.", "error");
-        return;
+        throw new Error("La hora final debe ser posterior a la inicial.");
+      }
+      if (
+        type === "stay" &&
+        (values.checkOutDate < values.checkInDate ||
+          (values.checkOutDate === values.checkInDate && values.checkInTime && values.checkOutTime &&
+            values.checkOutTime <= values.checkInTime))
+      ) {
+        throw new Error("La salida del alojamiento debe ser posterior a la entrada.");
+      }
+      if (type === "stay" && values.cancellationDeadline && values.cancellationDeadline > values.checkInDate) {
+        throw new Error("La fecha límite de cancelación no puede ser posterior a la entrada.");
+      }
+      if (
+        type === "transport" && values.arrivalDate &&
+        (`${values.arrivalDate}T${values.arrivalTime || "23:59"}` <
+          `${values.departureDate}T${values.departureTime || "00:00"}`)
+      ) {
+        throw new Error("La llegada del transporte no puede ser anterior a la salida.");
       }
       try {
         item ? await store.edit(collection, item.id, values) : await store.add(collection, values);
@@ -2071,7 +2559,15 @@ function openEditor(collection, idValue) {
       toast(item ? "Cambios guardados" : "Elemento añadido");
       render();
     },
-    onReady: type === "place" ? initializePlaceLinkImport : type === "activity" ? initializeActivityLinks : undefined,
+    onReady: type === "place"
+      ? (root) => initializePlaceEditor(root, item)
+      : type === "activity"
+      ? initializeActivityLinks
+      : type === "stay"
+      ? initializeStayFields
+      : type === "transport"
+      ? initializeTransportFields
+      : undefined,
     onDanger: item
       ? async () => {
         await store.remove(collection, item.id);
@@ -2248,6 +2744,19 @@ function bindRoute() {
       }
     })
   );
+  app.querySelectorAll("[data-copy-reference]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      const [collection, id, field] = button.dataset.copyReference.split(":");
+      const item = store.collection(collection).find((candidate) => candidate.id === id);
+      if (!item?.[field]) return;
+      try {
+        await navigator.clipboard.writeText(item[field]);
+        toast("Referencia copiada");
+      } catch {
+        toast("No se ha podido copiar la referencia.", "error");
+      }
+    })
+  );
   bindDrag();
   app.querySelector("[data-add-fund]")?.addEventListener("click", () => openEditor("funds"));
   if (ui.route === "map") {
@@ -2269,6 +2778,16 @@ function bindRoute() {
     render();
   });
   app.querySelector("[data-edit-trip]")?.addEventListener("click", editTrip);
+  app.querySelector("[data-export-project]")?.addEventListener("click", exportProject);
+  app.querySelector("[data-import-project]")?.addEventListener(
+    "click",
+    () => app.querySelector("[data-project-file]")?.click(),
+  );
+  app.querySelector("[data-project-file]")?.addEventListener("change", async (event) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (file) await importProject(file);
+  });
   app.querySelectorAll("[data-new-invite]").forEach((button) => button.addEventListener("click", createInvitation));
   app.querySelectorAll("[data-member-role]").forEach((select) =>
     select.addEventListener("change", () => changeMemberRole(select.dataset.memberRole, select.value))
@@ -2358,6 +2877,70 @@ async function refreshAfterConflict() {
   const payload = await store.loadTrip(store.activeTrip.id, handleRemoteChange);
   session.selectTrip(payload);
   render();
+}
+
+async function exportProject(event) {
+  const button = event?.currentTarget;
+  if (button) button.disabled = true;
+  try {
+    const archive = await apiClient.get(`/trips/${store.activeTrip.id}/archive`);
+    const filename = `${
+      store.activeTrip.name.normalize("NFKD").replace(/\p{Diacritic}/gu, "")
+        .toLocaleLowerCase("es").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "viaje"
+    }.tabi-trip.json`;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(archive, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast("Proyecto completo exportado");
+  } catch (error) {
+    toast(error.message || "No se ha podido exportar el proyecto.", "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function importProject(file) {
+  if (file.size > 10_000_000) return toast("El proyecto supera el límite de 10 MB.", "error");
+  let archive;
+  try {
+    archive = JSON.parse(await file.text());
+  } catch {
+    return toast("El archivo no contiene un JSON válido.", "error");
+  }
+  if (archive?.format !== "tabi-trip" || archive?.schemaVersion !== 1 || !archive.collections) {
+    return toast("Selecciona un proyecto Tabi compatible.", "error");
+  }
+  const entityCount = Object.values(archive.collections).reduce(
+    (sum, items) => sum + (Array.isArray(items) ? items.length : 0),
+    0,
+  );
+  const accepted = confirm(
+    `Vas a importar “${archive.trip?.name || "Proyecto sin nombre"}” con ${entityCount} elementos.\n\n` +
+      `Se sustituirá el contenido actual de “${store.activeTrip.name}”. Los miembros y permisos no cambiarán. ¿Continuar?`,
+  );
+  if (!accepted) return;
+  try {
+    ui.busy = true;
+    const result = await apiClient.post(`/trips/${store.activeTrip.id}/archive`, { archive });
+    const payload = await store.loadTrip(store.activeTrip.id, handleRemoteChange);
+    session.selectTrip(payload);
+    ui.selectedDate = "";
+    toast(
+      result.warnings?.length
+        ? `${result.imported} elementos importados · ${result.warnings.length} vínculos pendientes`
+        : `${result.imported} elementos importados`,
+    );
+    render();
+  } catch (error) {
+    toast(error.message || "No se ha podido importar el proyecto.", "error");
+  } finally {
+    ui.busy = false;
+  }
 }
 
 function createInvitation() {
@@ -2502,9 +3085,17 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
 
 async function start() {
   renderLoading();
-  await session.restore();
+  await Promise.all([session.restore(), loadVersion()]);
   if (inviteTokenFromPath()) return renderInvitation();
   if (shareTargetFromPath()) return renderShareTarget();
   if (!session.currentUser) return renderAuth();
   renderTripsDashboard();
+}
+
+async function loadVersion() {
+  try {
+    ui.commitSha = (await apiClient.get("/version")).commit || "";
+  } catch {
+    ui.commitSha = "";
+  }
 }

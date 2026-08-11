@@ -120,6 +120,32 @@ export function modal({
           }).join("")
         }</div></div>`;
     }
+    if (field.type === "emoji") {
+      const emojiButtons = (field.options || []).flatMap((category) =>
+        category.groups.flatMap(([keywords, emojis]) =>
+          emojis.split(/\s+/).map((emoji) =>
+            `<button class="emoji-option" type="button" role="option" aria-label="${
+              esc(`${emoji} ${keywords}`)
+            }" aria-selected="${String(emoji === value)}" data-emoji-option data-emoji="${
+              esc(emoji)
+            }" data-emoji-category="${esc(category.id)}" data-search-key="${
+              esc(searchKey(`${emoji} ${category.label} ${keywords}`))
+            }">${esc(emoji)}</button>`
+          )
+        )
+      ).join("");
+      const categories = (field.options || []).map((category, index) =>
+        `<button class="emoji-category${index === 0 ? " active" : ""}" type="button" data-emoji-category-button="${
+          esc(category.id)
+        }" aria-label="${esc(category.label)}" title="${esc(category.label)}">${esc(category.icon)}</button>`
+      ).join("");
+      control =
+        `<div class="emoji-picker" data-emoji-picker><input id="field-${field.name}" name="${field.name}" type="hidden" value="${
+          esc(value)
+        }"><div class="emoji-picker-search"><span class="emoji-preview" data-emoji-preview>${
+          esc(value || "📍")
+        }</span><input type="search" data-emoji-search placeholder="Buscar: gato, avión, Japón…" aria-label="Buscar emojis" autocomplete="off"></div><div class="emoji-categories" aria-label="Categorías de emojis">${categories}</div><div class="emoji-grid" role="listbox" aria-label="Emojis disponibles">${emojiButtons}</div><p class="emoji-empty" data-emoji-empty hidden>No hay emojis que coincidan con la búsqueda.</p></div>`;
+    }
     if (field.type === "textarea") {
       control = `<textarea id="field-${field.name}" name="${field.name}" placeholder="${
         esc(field.placeholder || "")
@@ -141,7 +167,14 @@ export function modal({
     }<button type="button" class="btn btn-secondary" data-close>Cancelar</button><button type="submit" class="btn btn-primary">${
       esc(submitLabel)
     }</button></footer></form></section></div>`;
-  const close = () => {
+  const form = root.querySelector("form");
+  const formSnapshot = () => JSON.stringify([...new FormData(form).entries()]);
+  let initialSnapshot = "";
+  const close = (force = false) => {
+    if (
+      !force && initialSnapshot && formSnapshot() !== initialSnapshot &&
+      !confirm("Hay cambios sin guardar. ¿Quieres cerrar el formulario y descartarlos?")
+    ) return;
     root.innerHTML = "";
     document.removeEventListener("keydown", keyHandler);
   };
@@ -149,7 +182,7 @@ export function modal({
     if (event.key === "Escape") close();
   };
   document.addEventListener("keydown", keyHandler);
-  root.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", close));
+  root.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => close()));
   root.querySelector(".modal-backdrop").addEventListener("click", (event) => {
     if (event.target.classList.contains("modal-backdrop")) close();
   });
@@ -220,7 +253,47 @@ export function modal({
     );
     validate();
   });
-  root.querySelector("form").addEventListener("submit", async (event) => {
+  root.querySelectorAll("[data-emoji-picker]").forEach((picker) => {
+    const valueInput = picker.querySelector('input[type="hidden"]');
+    const searchInput = picker.querySelector("[data-emoji-search]");
+    const preview = picker.querySelector("[data-emoji-preview]");
+    const empty = picker.querySelector("[data-emoji-empty]");
+    const options = [...picker.querySelectorAll("[data-emoji-option]")];
+    const categoryButtons = [...picker.querySelectorAll("[data-emoji-category-button]")];
+    let activeCategory = options.find((option) => option.getAttribute("aria-selected") === "true")
+      ?.dataset.emojiCategory || categoryButtons[0]?.dataset.emojiCategoryButton || "";
+    const filterEmojis = () => {
+      const query = searchKey(searchInput.value);
+      let visible = 0;
+      options.forEach((option) => {
+        option.hidden = query
+          ? !option.dataset.searchKey.includes(query)
+          : option.dataset.emojiCategory !== activeCategory;
+        if (!option.hidden) visible++;
+      });
+      empty.hidden = visible > 0;
+      categoryButtons.forEach((button) =>
+        button.classList.toggle("active", !query && button.dataset.emojiCategoryButton === activeCategory)
+      );
+    };
+    categoryButtons.forEach((button) =>
+      button.addEventListener("click", () => {
+        activeCategory = button.dataset.emojiCategoryButton;
+        searchInput.value = "";
+        filterEmojis();
+      })
+    );
+    options.forEach((option) =>
+      option.addEventListener("click", () => {
+        valueInput.value = option.dataset.emoji;
+        preview.textContent = option.dataset.emoji;
+        options.forEach((item) => item.setAttribute("aria-selected", String(item === option)));
+      })
+    );
+    searchInput.addEventListener("input", filterEmojis);
+    filterEmojis();
+  });
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const submit = event.currentTarget.querySelector('[type="submit"]');
     submit.disabled = true;
@@ -230,7 +303,7 @@ export function modal({
     });
     try {
       await onSubmit(output);
-      close();
+      close(true);
     } catch (error) {
       submit.disabled = false;
       toast(error.message || "No se han podido guardar los cambios.", "error");
@@ -240,13 +313,14 @@ export function modal({
     root.querySelector("[data-danger]")?.addEventListener("click", async () => {
       try {
         await onDanger();
-        close();
+        close(true);
       } catch (error) {
         toast(error.message || "No se ha podido eliminar.", "error");
       }
     });
   }
   onReady?.(root);
+  initialSnapshot = formSnapshot();
   setTimeout(() => root.querySelector("input, select, textarea")?.focus(), 0);
 }
 

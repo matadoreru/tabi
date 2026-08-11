@@ -1,13 +1,16 @@
 import {
   activityGoogleMapsUrl,
   budgetSummary,
+  findPlaceDuplicate,
   fundContributorOptions,
   googleMapsLinkSearch,
+  googleMapsPlaceKey,
   haversineKm,
   inspirationLink,
   itineraryAnalysis,
   minutes,
   sharedInspirationLink,
+  stayNights,
 } from "./domain.js";
 
 function assertEquals(actual, expected) {
@@ -46,6 +49,20 @@ Deno.test("extrae la búsqueda y coordenadas de un enlace de Google Maps", () =>
   assertEquals(result.query, "Sensō-ji");
   assertEquals(result.lat, 35.7148);
   assertEquals(result.lng, 139.7967);
+});
+Deno.test("detecta lugares duplicados por nombre normalizado y ciudad", () => {
+  const duplicate = findPlaceDuplicate(
+    { name: "  Senso ji ", city: "TOKIO" },
+    [{ id: "place-1", name: "Sensō-ji", city: "Tokio" }],
+  );
+  assertEquals(duplicate?.place.id, "place-1");
+  assertEquals(duplicate?.reason, "name");
+});
+Deno.test("identifica el mismo lugar de Maps aunque cambien parámetros de idioma", () => {
+  assertEquals(
+    googleMapsPlaceKey("https://www.google.com/maps/place/Senso-ji/@35.7,139.7,17z?hl=es"),
+    googleMapsPlaceKey("https://maps.google.es/maps/place/Senso-ji/@35.7,139.7,15z?hl=ja"),
+  );
 });
 Deno.test("reconoce enlaces de inspiración compatibles", () => {
   assertEquals(inspirationLink("https://www.tiktok.com/@tabi/video/123")?.platform, "TikTok");
@@ -93,3 +110,7 @@ Deno.test("conserva un aportante antiguo al editar", () => {
 });
 Deno.test("calcula distancia geográfica", () =>
   assertAlmostEquals(haversineKm({ lat: 35.7148, lng: 139.7967 }, { lat: 35.7101, lng: 139.7957 }), 0.53, 0.05));
+Deno.test("calcula las noches de un alojamiento sin depender del cambio horario", () => {
+  assertEquals(stayNights({ checkInDate: "2026-10-10", checkOutDate: "2026-10-13" }), 3);
+  assertEquals(stayNights({ checkInDate: "", checkOutDate: "2026-10-13" }), 0);
+});

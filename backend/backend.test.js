@@ -1,6 +1,8 @@
 const testDatabase = `/tmp/tabi-test-${Deno.pid}-${Date.now()}.sqlite`;
+const testCommit = "0123456789abcdef0123456789abcdef01234567";
 Deno.env.set("TABI_DATABASE_PATH", testDatabase);
 Deno.env.set("TABI_PUBLIC_ORIGIN", "https://tabi.example");
+Deno.env.set("TABI_COMMIT_SHA", testCommit);
 Deno.env.delete("TABI_GOOGLE_MAPS_API_KEY");
 Deno.env.delete("TABI_GOOGLE_MAPS_MAP_ID");
 
@@ -62,6 +64,13 @@ async function call(method, path, payload, cookie = "", origin = "https://tabi.e
   return { status: response.status, data, cookie: response.headers.get("set-cookie")?.split(";")[0] || cookie };
 }
 
+Deno.test("publica la versión de la aplicación sin requerir sesión", async () => {
+  const version = await call("GET", "/api/version");
+  assertEquals(version.status, 200);
+  assertEquals(version.data.commit, testCommit);
+  assertEquals(version.data.shortCommit, testCommit.slice(0, 8));
+});
+
 Deno.test({
   name: "flujo colaborativo aplica autenticación, capacidades, invitaciones y locking",
   sanitizeResources: false,
@@ -113,12 +122,72 @@ Deno.test({
     const place = await call(
       "POST",
       `/api/trips/${tripId}/places`,
-      { name: "Museo Ghibli", city: "Tokio", markerIcon: "🏛️" },
+      {
+        name: "Museo Ghibli",
+        city: "Tokio",
+        markerIcon: "🏛️",
+        admission: "Entrada de pago",
+        ticketPrice: 1000,
+        link: "https://www.google.com/maps/place/Museo+Ghibli/@35.6962,139.5704,17z",
+      },
       owner.cookie,
     );
     assertEquals(place.status, 201);
     assertEquals(place.data.item.version, 1);
     assertEquals(place.data.item.markerIcon, "🏛️");
+    const duplicatePlaceName = await call(
+      "POST",
+      `/api/trips/${tripId}/places`,
+      { name: " museo-ghibli ", city: "TOKÍO" },
+      owner.cookie,
+    );
+    assertEquals(duplicatePlaceName.status, 409);
+    assertEquals(duplicatePlaceName.data.error.code, "PLACE_EXISTS");
+    assertEquals(duplicatePlaceName.data.error.details.duplicateId, place.data.item.id);
+    const duplicatePlaceLink = await call(
+      "POST",
+      `/api/trips/${tripId}/places`,
+      {
+        name: "Estudio de animación",
+        city: "Mitaka",
+        link: "https://maps.google.es/maps/place/Museo+Ghibli/@35.6962,139.5704,15z?hl=ja",
+      },
+      owner.cookie,
+    );
+    assertEquals(duplicatePlaceLink.status, 409);
+    const stay = await call(
+      "POST",
+      `/api/trips/${tripId}/stays`,
+      {
+        name: "Hotel de prueba",
+        city: "Tokio",
+        platform: "Booking",
+        bookingStatus: "Confirmada",
+        checkInDate: "2026-09-18",
+        checkOutDate: "2026-09-20",
+        checkInTime: "15:00",
+        checkOutTime: "11:00",
+        luggageStorage: "Antes y después",
+        luggageNotes: "Avisar en recepción",
+      },
+      owner.cookie,
+    );
+    assertEquals(stay.status, 201);
+    assertEquals(stay.data.item.platform, "Booking");
+    const invalidStay = await call(
+      "POST",
+      `/api/trips/${tripId}/stays`,
+      {
+        name: "Viaje temporal",
+        city: "Osaka",
+        platform: "Airbnb",
+        checkInDate: "2026-09-20",
+        checkOutDate: "2026-09-19",
+      },
+      owner.cookie,
+    );
+    assertEquals(invalidStay.status, 422);
+    assertEquals(invalidStay.data.error.code, "INVALID_STAY_DATES");
     const inspiration = await call(
       "POST",
       `/api/trips/${tripId}/inspirations`,
@@ -203,8 +272,71 @@ Deno.test({
       date: "2026-09-18",
       start: "09:00",
       end: "10:00",
+      placeId: place.data.item.id,
     }, alex.cookie);
     assertEquals(editorWrite.status, 201);
+    const linkedPlaceActivity = await call("POST", `/api/trips/${tripId}/activities`, {
+      title: "Visitar el museo",
+      activityKind: "Lugar",
+      placeId: place.data.item.id,
+      date: "2026-09-18",
+      start: "11:00",
+      end: "12:00",
+    }, owner.cookie);
+    assertEquals(linkedPlaceActivity.status, 201);
+    const linkedStayActivity = await call("POST", `/api/trips/${tripId}/activities`, {
+      title: "Check-in",
+      activityKind: "Hospedaje",
+      stayId: stay.data.item.id,
+      date: "2026-09-18",
+      start: "15:00",
+      end: "15:30",
+    }, owner.cookie);
+    assertEquals(linkedStayActivity.status, 201);
+    const missingActivityLink = await call("POST", `/api/trips/${tripId}/activities`, {
+      title: "Transporte sin seleccionar",
+      activityKind: "Transporte",
+      date: "2026-09-18",
+      start: "16:00",
+      end: "17:00",
+    }, owner.cookie);
+    assertEquals(missingActivityLink.status, 422);
+    assertEquals(missingActivityLink.data.error.code, "MISSING_ACTIVITY_LINK");
+
+    const archiveResponse = await call("GET", `/api/trips/${tripId}/archive`, null, owner.cookie);
+    assertEquals(archiveResponse.status, 200);
+    assertEquals(archiveResponse.data.format, "tabi-trip");
+    assertEquals(archiveResponse.data.schemaVersion, 1);
+    assertEquals(archiveResponse.data.collections.places[0].id, place.data.item.id);
+    assertEquals(archiveResponse.data.collections.places[0].version, undefined);
+    archiveResponse.data.trip.name = "Japón editado desde archivo";
+    archiveResponse.data.collections.places[0].description = "Cambio externo";
+    archiveResponse.data.collections.places.push({ id: "place_new_1", name: "Kinkaku-ji", city: "Kioto" });
+    archiveResponse.data.collections.activities.push({
+      title: "Visitar Kinkaku-ji",
+      date: "2026-09-19",
+      start: "10:00",
+      end: "11:00",
+      placeId: "place_new_1",
+    });
+    archiveResponse.data.collections.tasks.push({ title: "Preparar maletas", status: "Pendiente" });
+    const importedArchive = await call(
+      "POST",
+      `/api/trips/${tripId}/archive`,
+      { archive: archiveResponse.data },
+      owner.cookie,
+    );
+    assertEquals(importedArchive.status, 200);
+    assertEquals(importedArchive.data.trip.name, "Japón editado desde archivo");
+    const afterArchive = await call("GET", `/api/trips/${tripId}/bootstrap`, null, owner.cookie);
+    assertEquals(afterArchive.data.places[0].description, "Cambio externo");
+    assertEquals(afterArchive.data.tasks[0].title, "Preparar maletas");
+    assertEquals(afterArchive.data.activities[0].title, "Plan compartido");
+    assertEquals(afterArchive.data.activities[0].placeId, place.data.item.id);
+    assertEquals(
+      afterArchive.data.activities.find(({ title }) => title === "Visitar Kinkaku-ji").placeId,
+      "place_new_1",
+    );
 
     const outsider = await call("POST", "/api/auth/register", {
       name: "Laura",

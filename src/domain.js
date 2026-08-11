@@ -63,6 +63,55 @@ export function googleMapsLinkSearch(value) {
   }
 }
 
+export function normalizePlaceText(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase("es")
+    .replace(/[^\p{Letter}\p{Number}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+export function googleMapsPlaceKey(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    if (url.protocol !== "https:") return "";
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (host === "maps.app.goo.gl") return `short:${host}${url.pathname.replace(/\/$/, "")}`;
+    if (!/^maps\.google\.[a-z.]+$/.test(host) && !/^google\.[a-z.]+$/.test(host)) return "";
+    if (!url.pathname.startsWith("/maps")) return "";
+
+    const explicitId = url.searchParams.get("query_place_id") ||
+      url.searchParams.get("q")?.match(/^place_id:(.+)$/i)?.[1];
+    if (explicitId) return `place:${explicitId.toLowerCase()}`;
+    const embeddedId = decodeURIComponent(url.pathname).match(/!1s([^!/?]+)/)?.[1];
+    if (embeddedId) return `place:${embeddedId.toLowerCase()}`;
+
+    const path = decodeURIComponent(url.pathname)
+      .replace(/\/@-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?[^/]*/g, "")
+      .replace(/\/$/, "");
+    const query = url.searchParams.get("query") || url.searchParams.get("q") || "";
+    return `google:${normalizePlaceText(`${path} ${query}`)}`;
+  } catch {
+    return "";
+  }
+}
+
+export function findPlaceDuplicate(candidate, places, excludedId = "") {
+  const name = normalizePlaceText(candidate?.name);
+  const city = normalizePlaceText(candidate?.city);
+  const linkKey = googleMapsPlaceKey(candidate?.link);
+  for (const place of places || []) {
+    if (place.id === excludedId) continue;
+    if (linkKey && linkKey === googleMapsPlaceKey(place.link)) return { place, reason: "link" };
+    if (name && city && name === normalizePlaceText(place.name) && city === normalizePlaceText(place.city)) {
+      return { place, reason: "name" };
+    }
+  }
+  return null;
+}
+
 export function inspirationLink(value) {
   try {
     const url = new URL(String(value || "").trim());
@@ -157,6 +206,16 @@ export function dateRange(startDate, endDate) {
     current.setDate(current.getDate() + 1);
   }
   return dates;
+}
+
+export function stayNights(stay) {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(stay?.checkInDate || "") ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(stay?.checkOutDate || "")
+  ) return 0;
+  const start = Date.parse(`${stay.checkInDate}T00:00:00Z`);
+  const end = Date.parse(`${stay.checkOutDate}T00:00:00Z`);
+  return Math.max(0, Math.round((end - start) / 86400000));
 }
 
 export function haversineKm(a, b) {

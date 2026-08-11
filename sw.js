@@ -1,4 +1,4 @@
-const CACHE = "tabi-v7";
+const CACHE = "tabi-v9";
 const ASSETS = [
   "./",
   "./index.html",
@@ -9,6 +9,7 @@ const ASSETS = [
   "./src/data.js",
   "./src/countries.js",
   "./src/domain.js",
+  "./src/emojis.js",
   "./src/store.js",
   "./src/ui.js",
   "./src/permissions.js",

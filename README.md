@@ -91,6 +91,16 @@ usuario elimina sus sesiones y membresías; en auditoría y entidades el autor s
 La antigua información de `localStorage` no se elimina. Al crear el primer viaje, la UI detecta `tabi-data-v1` y permite
 importarla mediante una transacción autenticada.
 
+### Proyectos editables (`.tabi-trip.json`)
+
+Desde Configuración se puede exportar una copia completa del contenido del viaje en JSON e importarla de nuevo después
+de editarla o procesarla con ChatGPT. El archivo incluye los datos generales y todas las colecciones, conserva los IDs
+que enlazan actividades con lugares, alojamientos y transportes, y contiene una guía breve para su edición.
+
+La importación valida primero el archivo y después sustituye el contenido en una sola transacción: un error no deja el
+viaje a medias. Las cuentas, membresías, permisos, invitaciones, sesiones y el historial de auditoría no son portables y
+permanecen intactos en el viaje de destino.
+
 ## Autenticación y seguridad
 
 - Login mediante usuario o email. Contraseñas derivadas con PBKDF2-SHA-256, 310.000 iteraciones y sal aleatoria

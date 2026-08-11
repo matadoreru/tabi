@@ -166,6 +166,40 @@ h3,
   margin-top: auto;
   padding-top: 18px;
 }
+.app-version {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .02em;
+  opacity: .62;
+  user-select: text;
+}
+.app-version code {
+  color: inherit;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: inherit;
+}
+.app-version-sidebar {
+  display: block;
+  margin-top: 9px;
+  text-align: center;
+}
+.app-version-page {
+  display: block;
+  padding: 0 16px 12px;
+  text-align: center;
+}
+.app-version-auth {
+  position: absolute;
+  bottom: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+.app-version-project-mobile {
+  display: none;
+  text-align: center;
+}
 .trip-mini {
   background: var(--surface-2);
   border-radius: 15px;
@@ -868,6 +902,14 @@ textarea {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.place-admission {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -3px 0 12px;
+  font-size: 12px;
+}
 .place-meta {
   display: flex;
   justify-content: space-between;
@@ -997,6 +1039,13 @@ textarea {
 }
 .event-body small {
   color: var(--muted);
+}
+.event-context {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 .drag-handle {
   color: var(--muted);
@@ -1264,6 +1313,10 @@ textarea {
   border-radius: var(--radius-md);
   background: var(--surface-2);
 }
+.map-selected[hidden],
+.map-mobile-selected[hidden] {
+  display: none !important;
+}
 .map-place-preview small,
 .map-selected small {
   display: block;
@@ -1408,6 +1461,135 @@ textarea {
   font-size: 11px;
   color: var(--muted);
 }
+.duplicate-warning {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--line));
+  border-radius: 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+  font-size: 12px;
+}
+.duplicate-warning[hidden] {
+  display: none;
+}
+.duplicate-warning .icon {
+  flex: 0 0 auto;
+  color: var(--warning);
+}
+.quick-place-toggle {
+  justify-self: start;
+  margin-top: 3px;
+}
+.quick-place {
+  grid-column: 1 / -1;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-2);
+}
+.quick-place[hidden] {
+  display: none;
+}
+.quick-place-head,
+.quick-place-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.quick-place-head {
+  margin-bottom: 13px;
+}
+.quick-place-head strong,
+.quick-place-head span {
+  display: block;
+}
+.quick-place-head span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.quick-place-actions {
+  justify-content: flex-end;
+  margin-top: 13px;
+}
+.project-transfer > p {
+  margin: 0 0 15px;
+  line-height: 1.55;
+}
+.project-transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.stay-card .card-head {
+  align-items: flex-start;
+}
+.stay-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 7px;
+}
+.stay-summary,
+.stay-details,
+.stay-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.stay-summary {
+  justify-content: space-between;
+  margin-top: 17px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.stay-summary span,
+.stay-details {
+  color: var(--muted);
+  font-size: 12px;
+}
+.stay-details {
+  margin-top: 11px;
+}
+.stay-cancellation {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 11px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+.stay-cancellation.expired {
+  color: var(--danger);
+}
+.stay-actions {
+  margin-top: 15px;
+}
+.stay-actions .icon-btn {
+  margin-left: auto;
+}
+.stay-copy-reference {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.cell-link {
+  display: block;
+  margin-top: 3px;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
 .autocomplete {
   position: relative;
 }
@@ -1442,6 +1624,82 @@ textarea {
 .autocomplete-options button.active {
   color: var(--primary);
   background: var(--primary-soft);
+}
+.emoji-picker {
+  display: grid;
+  gap: 9px;
+}
+.emoji-picker-search {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 8px;
+}
+.emoji-preview {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-size: 24px;
+}
+.emoji-categories {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 3px;
+}
+.emoji-category,
+.emoji-option {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.emoji-category {
+  flex: 1 0 38px;
+  min-width: 38px;
+  padding: 7px;
+  border-radius: 9px;
+  font-size: 19px;
+}
+.emoji-category:hover,
+.emoji-category.active {
+  background: var(--primary-soft);
+}
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 3px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-2);
+}
+.emoji-option {
+  display: grid;
+  place-items: center;
+  min-height: 40px;
+  border-radius: 9px;
+  font-size: 23px;
+}
+.emoji-option[hidden] {
+  display: none;
+}
+.emoji-option:hover,
+.emoji-option:focus-visible {
+  background: var(--primary-soft);
+  scale: 1.12;
+}
+.emoji-option[aria-selected="true"] {
+  outline: 2px solid var(--primary);
+  background: var(--primary-soft);
+}
+.emoji-empty {
+  margin: 5px 0;
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
 }
 
 .toast {
@@ -1556,6 +1814,7 @@ textarea {
 }
 
 .auth-shell {
+  position: relative;
   min-height: 100vh;
   display: grid;
   grid-template-columns: minmax(380px, 560px) 1fr;
@@ -1798,6 +2057,10 @@ textarea {
   }
   .mobile-only {
     display: initial;
+  }
+  .app-version-project-mobile {
+    display: block;
+    padding: 0 12px 8px;
   }
   .mobile-nav {
     display: grid;
