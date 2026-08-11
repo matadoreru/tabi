@@ -1248,9 +1248,9 @@ function mapSelectedDetails(place) {
     esc(placeDirectionsUrl(place))
   }">${icon("external")} Cómo llegar</a>${
     session.can(PERMISSIONS.TRIP_EDIT)
-      ? `<button class="btn btn-ghost icon-btn" type="button" data-edit="places:${place.id}" aria-label="Editar lugar">${
+      ? `<button class="btn btn-secondary" type="button" data-edit="places:${place.id}" aria-label="Editar lugar">${
         icon("edit")
-      }</button>`
+      } Editar</button>`
       : ""
   }</div>`;
 }
