@@ -13,6 +13,13 @@ const paths = {
     '<rect x="5" y="2" width="14" height="17" rx="4"/><path d="M8 22l2-3M16 19l2 3M5 13h14M9 6h6"/><circle cx="9" cy="16" r="1"/><circle cx="15" cy="16" r="1"/>',
   ticket: '<path d="M3 7a2 2 0 0 0 0 4v6h18v-6a2 2 0 0 0 0-4V5H3v2Z"/><path d="M13 5v12"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/>',
+  note:
+    '<path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 15-5-5L5 20"/>',
+  grip:
+    '<circle cx="12" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="18" r="1.2" fill="currentColor" stroke="none"/>',
+  up: '<path d="m6 15 6-6 6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
   settings:
     '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.1.38.3.72.6 1 .3.27.68.4 1.1.4h.09v4h-.09a1.7 1.7 0 0 0-1.7.6Z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -20,6 +27,7 @@ const paths = {
     '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/>',
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+  filter: '<path d="M3 5h18M6 12h12M10 19h4"/>',
   edit: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
@@ -48,6 +56,131 @@ export const esc = (value = "") =>
   );
 export const searchKey = (value = "") =>
   String(value).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("es").trim();
+
+const visualSymbols = Object.freeze({
+  todos: "✦",
+  pendiente: "⏳",
+  planeado: "🗓️",
+  visitado: "✅",
+  realizado: "✅",
+  realizada: "✅",
+  completada: "✅",
+  completado: "✅",
+  pagado: "✅",
+  comprado: "✅",
+  confirmada: "✅",
+  confirmado: "✅",
+  activa: "🟢",
+  encontrado: "👀",
+  visto: "👁️",
+  vistos: "👁️",
+  "no visto": "👁️‍🗨️",
+  "no vistos": "👁️‍🗨️",
+  sincronizado: "🔄",
+  parcial: "◐",
+  "por reservar": "🕒",
+  descartado: "⛔",
+  cancelada: "⛔",
+  cancelado: "⛔",
+  revocada: "⛔",
+  expirada: "⌛",
+  consumida: "✓",
+  "no encontrado": "❌",
+  imprescindible: "⭐",
+  alta: "🔴",
+  media: "🟡",
+  baja: "🟢",
+  antes: "⏮️",
+  durante: "✈️",
+  después: "⏭️",
+  "en persona": "🤝",
+  airbnb: "🏠",
+  booking: "🏨",
+  otros: "🧩",
+  otro: "🧩",
+  general: "📝",
+  "actividad general": "📝",
+  "ir a un lugar guardado": "📍",
+  "ir a un hospedaje": "🛏️",
+  "tomar un transporte": "🚆",
+  lugar: "📍",
+  visita: "👣",
+  trayecto: "🧭",
+  vuelo: "✈️",
+  "check-in": "🔑",
+  hospedaje: "🛏️",
+  alojamiento: "🛏️",
+  transporte: "🚆",
+  templo: "⛩️",
+  restaurante: "🍜",
+  tienda: "🛍️",
+  museo: "🏛️",
+  parque: "🌿",
+  mirador: "🌇",
+  actividad: "🎟️",
+  cafetería: "☕",
+  vuelos: "✈️",
+  hoteles: "🏨",
+  comida: "🍜",
+  compras: "🛍️",
+  entradas: "🎟️",
+  actividades: "🎡",
+  avión: "✈️",
+  shinkansen: "🚄",
+  tren: "🚆",
+  metro: "🚇",
+  autobús: "🚌",
+  "bus nocturno": "🌙",
+  ferry: "⛴️",
+  local: "🚃",
+  documentación: "📄",
+  reservas: "🎟️",
+  equipaje: "🧳",
+  dinero: "💴",
+  tecnología: "📱",
+  salud: "🩹",
+  souvenirs: "🎁",
+  ropa: "👕",
+  electrónica: "🔌",
+  coleccionismo: "🧸",
+  cosmética: "🧴",
+  billete: "🎫",
+  reserva: "🎟️",
+  pdf: "📄",
+  qr: "▣",
+  seguro: "🛡️",
+  pasaporte: "🛂",
+  confirmación: "✅",
+  entrada: "🎟️",
+  consejos: "💡",
+  lugares: "📍",
+  propietario: "👑",
+  owner: "👑",
+  editor: "✏️",
+  lector: "👁️",
+  viewer: "👁️",
+  "solo lectura": "👁️",
+  sistema: "🖥️",
+  claro: "☀️",
+  oscuro: "🌙",
+  tiktok: "🎵",
+  instagram: "📸",
+  youtube: "▶️",
+  "no necesita entrada": "🆓",
+  "entrada gratuita": "🆓",
+  "entrada de pago": "🎟️",
+  "reserva obligatoria": "📅",
+  "entrada no indicada": "❔",
+});
+
+export const visualSymbol = (value = "") => {
+  const key = String(value).trim().toLocaleLowerCase("es");
+  return visualSymbols[key] || visualSymbols[key.split(/\s*[·—]\s*/)[0]] || "";
+};
+export const visualLabel = (value = "") => {
+  const symbol = visualSymbol(value);
+  return symbol ? `${symbol} ${value}` : String(value);
+};
 export const formatDate = (date, options = {}) => {
   if (!date) return "—";
   const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T12:00:00`) : new Date(date);
@@ -64,14 +197,19 @@ export const fullDate = (date) =>
     )
     : "";
 export const statusTone = (status = "") =>
-  /pagado|comprado|visitado|confirmad|completad/i.test(status)
+  /pagado|comprado|visitado|confirmad|completad|realizad|activa|consumida/i.test(status)
     ? "green"
-    : /pendiente|por reservar|parcial/i.test(status)
+    : /pendiente|por reservar|parcial|expirada/i.test(status)
     ? "amber"
-    : /descartado|no encontrado|cancel/i.test(status)
+    : /descartado|no encontrado|cancel|revocada/i.test(status)
     ? "red"
     : "blue";
-export const badge = (label, tone) => `<span class="badge ${tone || statusTone(label)}">${esc(label)}</span>`;
+export const badge = (label, tone) => {
+  const symbol = visualSymbol(label);
+  return `<span class="badge ${tone || statusTone(label)}">${
+    symbol ? `<span class="badge-symbol" aria-hidden="true">${symbol}</span>` : ""
+  }${esc(label)}</span>`;
+};
 
 export function modal({
   title,
@@ -90,7 +228,7 @@ export function modal({
     const options = (field.options || []).map((option) => {
       const item = typeof option === "string" ? { value: option, label: option } : option;
       return `<option value="${esc(item.value)}" ${String(item.value) === String(value) ? "selected" : ""}>${
-        esc(item.label)
+        esc(visualLabel(item.label))
       }</option>`;
     }).join("");
     let control = `<input id="field-${field.name}" name="${field.name}" type="${field.type || "text"}" value="${
@@ -150,6 +288,18 @@ export function modal({
       control = `<textarea id="field-${field.name}" name="${field.name}" placeholder="${
         esc(field.placeholder || "")
       }">${esc(value)}</textarea>`;
+    }
+    if (field.type === "image") {
+      control =
+        `<div class="image-picker" data-image-picker><input id="field-${field.name}" name="${field.name}" type="hidden" value="${
+          esc(value)
+        }"><div class="image-preview ${value ? "has-image" : ""}" data-image-preview>${
+          value ? `<img src="${esc(value)}" alt="Vista previa de la imagen">` : `<span>${icon("image")} Sin foto</span>`
+        }</div><div class="image-picker-actions"><label class="btn btn-secondary" for="field-${field.name}-file">${
+          icon("upload")
+        } Elegir foto</label><input id="field-${field.name}-file" type="file" accept="image/jpeg,image/png,image/webp" data-image-file hidden><button class="btn btn-ghost" type="button" data-image-remove ${
+          value ? "" : "hidden"
+        }>Quitar</button></div></div>`;
     }
     return `<div class="field ${field.full ? "full" : ""}" data-field="${
       esc(field.name)
@@ -293,6 +443,37 @@ export function modal({
     searchInput.addEventListener("input", filterEmojis);
     filterEmojis();
   });
+  root.querySelectorAll("[data-image-picker]").forEach((picker) => {
+    const valueInput = picker.querySelector('input[type="hidden"]');
+    const fileInput = picker.querySelector("[data-image-file]");
+    const preview = picker.querySelector("[data-image-preview]");
+    const remove = picker.querySelector("[data-image-remove]");
+    const show = (value) => {
+      valueInput.value = value;
+      preview.classList.toggle("has-image", Boolean(value));
+      preview.innerHTML = value
+        ? `<img src="${esc(value)}" alt="Vista previa de la imagen">`
+        : `<span>${icon("image")} Sin foto</span>`;
+      remove.hidden = !value;
+      valueInput.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      if (file.size > 12_000_000) {
+        fileInput.value = "";
+        return toast("La foto original supera el límite de 12 MB.", "error");
+      }
+      try {
+        show(await compressedImage(file));
+      } catch (error) {
+        toast(error.message || "No se ha podido preparar la foto.", "error");
+      } finally {
+        fileInput.value = "";
+      }
+    });
+    remove.addEventListener("click", () => show(""));
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const submit = event.currentTarget.querySelector('[type="submit"]');
@@ -322,6 +503,34 @@ export function modal({
   onReady?.(root);
   initialSnapshot = formSnapshot();
   setTimeout(() => root.querySelector("input, select, textarea")?.focus(), 0);
+}
+
+function compressedImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("No se ha podido leer la foto."));
+    reader.onload = () => {
+      const source = new Image();
+      source.onerror = () => reject(new Error("El archivo seleccionado no es una imagen válida."));
+      source.onload = () => {
+        const encode = (maximum, quality) => {
+          const scale = Math.min(1, maximum / Math.max(source.naturalWidth, source.naturalHeight));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
+          canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+          return canvas.toDataURL("image/webp", quality);
+        };
+        let data = encode(960, .76);
+        if (data.length > 350_000) data = encode(720, .62);
+        if (data.length > 350_000) {
+          reject(new Error("La foto sigue siendo demasiado grande después de optimizarla."));
+        } else resolve(data);
+      };
+      source.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 export function toast(message, tone = "success") {

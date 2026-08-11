@@ -95,7 +95,9 @@ importarla mediante una transacción autenticada.
 
 Desde Configuración se puede exportar una copia completa del contenido del viaje en JSON e importarla de nuevo después
 de editarla o procesarla con ChatGPT. El archivo incluye los datos generales y todas las colecciones, conserva los IDs
-que enlazan actividades con lugares, alojamientos y transportes, y contiene una guía breve para su edición.
+que enlazan actividades con lugares, alojamientos y transportes, y contiene una guía breve para su edición. Las fotos
+optimizadas de productos, las referencias de fotos de Google Places y las notas ordenables también forman parte del
+archivo.
 
 La importación valida primero el archivo y después sustituye el contenido en una sola transacción: un error no deja el
 viaje a medias. Las cuentas, membresías, permisos, invitaciones, sesiones y el historial de auditoría no son portables y

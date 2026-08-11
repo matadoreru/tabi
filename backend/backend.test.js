@@ -303,11 +303,19 @@ Deno.test({
     assertEquals(missingActivityLink.status, 422);
     assertEquals(missingActivityLink.data.error.code, "MISSING_ACTIVITY_LINK");
 
+    const note = await call("POST", `/api/trips/${tripId}/notes`, {
+      title: "Recordatorio",
+      content: "Llevar efectivo",
+      order: 1,
+    }, owner.cookie);
+    assertEquals(note.status, 201);
+
     const archiveResponse = await call("GET", `/api/trips/${tripId}/archive`, null, owner.cookie);
     assertEquals(archiveResponse.status, 200);
     assertEquals(archiveResponse.data.format, "tabi-trip");
     assertEquals(archiveResponse.data.schemaVersion, 1);
     assertEquals(archiveResponse.data.collections.places[0].id, place.data.item.id);
+    assertEquals(archiveResponse.data.collections.notes[0].title, "Recordatorio");
     assertEquals(archiveResponse.data.collections.places[0].version, undefined);
     archiveResponse.data.trip.name = "Japón editado desde archivo";
     archiveResponse.data.collections.places[0].description = "Cambio externo";
@@ -331,6 +339,7 @@ Deno.test({
     const afterArchive = await call("GET", `/api/trips/${tripId}/bootstrap`, null, owner.cookie);
     assertEquals(afterArchive.data.places[0].description, "Cambio externo");
     assertEquals(afterArchive.data.tasks[0].title, "Preparar maletas");
+    assertEquals(afterArchive.data.notes[0].content, "Llevar efectivo");
     assertEquals(afterArchive.data.activities[0].title, "Plan compartido");
     assertEquals(afterArchive.data.activities[0].placeId, place.data.item.id);
     assertEquals(

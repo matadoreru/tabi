@@ -578,7 +578,9 @@ async function importTripArchive(archive, user, tripId) {
   const prepared = {};
   const idMaps = {};
   for (const [collection, table] of Object.entries(ENTITY_TABLES)) {
-    const sources = archive.collections[collection];
+    const sources = collection === "notes" && archive.collections[collection] === undefined
+      ? []
+      : archive.collections[collection];
     if (!Array.isArray(sources)) {
       throw new HttpError(422, "INVALID_ARCHIVE", `Falta la colección “${collection}” en el archivo.`);
     }
@@ -895,8 +897,9 @@ function validateEntity(collection, data) {
   if (Object.keys(data).length > 60) {
     throw new HttpError(422, "INVALID_ENTITY", "El elemento contiene demasiados campos.");
   }
-  for (const value of Object.values(data)) {
-    if (typeof value === "string" && value.length > 10_000) {
+  for (const [field, value] of Object.entries(data)) {
+    const maxLength = field === "photo" && /^data:image\/(?:jpeg|png|webp);base64,/.test(value) ? 350_000 : 10_000;
+    if (typeof value === "string" && value.length > maxLength) {
       throw new HttpError(422, "INVALID_ENTITY", "Uno de los campos es demasiado largo.");
     }
   }
@@ -912,9 +915,13 @@ function validateEntity(collection, data) {
     reservations: ["title", "date"],
     documents: ["name"],
     inspirations: ["url"],
+    notes: ["title"],
   }[collection] || [];
   if (required.some((field) => !String(data[field] || "").trim())) {
     throw new HttpError(422, "MISSING_FIELDS", "Faltan campos obligatorios.");
+  }
+  if (collection === "purchases" && data.photo && !/^data:image\/(?:jpeg|png|webp);base64,/.test(data.photo)) {
+    throw new HttpError(422, "INVALID_PURCHASE_PHOTO", "La foto del producto no tiene un formato válido.");
   }
   if (collection === "activities" && data.end <= data.start) {
     throw new HttpError(422, "INVALID_TIME", "La hora final debe ser posterior a la inicial.");
@@ -933,6 +940,12 @@ function validateEntity(collection, data) {
     !["No necesita entrada", "Entrada gratuita", "Entrada de pago", "Reserva obligatoria"].includes(data.admission)
   ) {
     throw new HttpError(422, "INVALID_ADMISSION", "El tipo de entrada del lugar no es válido.");
+  }
+  if (
+    collection === "places" &&
+    [data.photoUrl, data.photoAttributionUrl].some((value) => value && !String(value).startsWith("https://"))
+  ) {
+    throw new HttpError(422, "INVALID_PLACE_PHOTO", "La referencia de la foto de Google Maps no es válida.");
   }
   if (collection === "stays") {
     if (
@@ -1023,7 +1036,7 @@ function validateEntity(collection, data) {
   }
 }
 function diff(before, after) {
-  const ignored = new Set(["id", "tripId", "version", "createdAt", "updatedAt", "createdBy", "updatedBy"]);
+  const ignored = new Set(["id", "tripId", "version", "createdAt", "updatedAt", "createdBy", "updatedBy", "photo"]);
   return Object.fromEntries(
     Object.keys(after).filter((key) => !ignored.has(key) && JSON.stringify(before[key]) !== JSON.stringify(after[key]))
       .map((key) => [key, { from: before[key] ?? null, to: after[key] ?? null }]),

@@ -14,6 +14,7 @@ const COLLECTIONS = [
   "reservations",
   "documents",
   "inspirations",
+  "notes",
 ];
 
 export class Store {

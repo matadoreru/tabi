@@ -16,7 +16,19 @@ import {
 } from "./domain.js";
 import { EMOJI_GROUPS } from "./emojis.js";
 import { Store } from "./store.js";
-import { badge, emptyState, esc, formatDate, formatMoney, fullDate, icon, modal, searchKey, toast } from "./ui.js";
+import {
+  badge,
+  emptyState,
+  esc,
+  formatDate,
+  formatMoney,
+  fullDate,
+  icon,
+  modal,
+  searchKey,
+  toast,
+  visualLabel,
+} from "./ui.js";
 import { apiClient, ApiError } from "./api-client.js";
 import { session } from "./session.js";
 import { PERMISSIONS, ROLE_LABELS } from "./permissions.js";
@@ -44,6 +56,7 @@ const NAV = [
   ["places", "Lugares", "pin"],
   ["purchases", "Compras", "bag"],
   ["tasks", "TODO", "check"],
+  ["notes", "Notas", "note"],
   ["budget", "Presupuesto", "wallet"],
   ["stays", "Hospedaje", "bed"],
   ["transport", "Transporte", "train"],
@@ -60,6 +73,7 @@ const DESCRIPTIONS = {
   places: "Tu colección de sitios por descubrir",
   purchases: "Caprichos, regalos y encargos bajo control",
   tasks: "Antes, durante y después del viaje",
+  notes: "Ideas y apuntes del viaje, siempre a mano",
   budget: "Previsión y gasto real en un mismo sitio",
   stays: "Tus alojamientos y check-ins",
   transport: "Todos tus trayectos, conectados",
@@ -201,6 +215,13 @@ const fields = {
   ],
   purchase: [
     { name: "product", label: "Producto", required: true, full: true },
+    {
+      name: "photo",
+      label: "Foto del producto",
+      type: "image",
+      help: "La imagen se optimiza antes de guardarse y se incluye al exportar el viaje.",
+      full: true,
+    },
     { name: "category", label: "Categoría", type: "select", options: CATEGORIES.shopping },
     { name: "recipient", label: "Para quién" },
     { name: "city", label: "Ciudad" },
@@ -362,6 +383,16 @@ const fields = {
       full: true,
     },
   ],
+  note: [
+    { name: "title", label: "Título", required: true, placeholder: "Ej. Cosas que recordar", full: true },
+    {
+      name: "content",
+      label: "Texto",
+      type: "textarea",
+      placeholder: "Escribe aquí tu nota…",
+      full: true,
+    },
+  ],
 };
 
 function resolvedFields(type, values = {}) {
@@ -449,6 +480,7 @@ function layout(content) {
     places: "Lugar",
     purchases: "Compra",
     tasks: "Tarea",
+    notes: "Nota",
     budget: "Gasto",
     stays: "Alojamiento",
     transport: "Transporte",
@@ -507,6 +539,7 @@ function render() {
     places: renderPlaces,
     purchases: renderPurchases,
     tasks: renderTasks,
+    notes: renderNotes,
     budget: renderBudget,
     stays: renderStays,
     transport: renderTransport,
@@ -808,7 +841,12 @@ function renderShareTarget() {
               trips.map((trip) => `<option value="${esc(trip.id)}">${esc(`${trip.emoji} ${trip.name}`)}</option>`).join(
                 "",
               )
-            }</select></div><div class="field full"><label for="share-category">Categoría</label><select id="share-category" name="category"><option>Lugares</option><option>Comida</option><option>Actividades</option><option>Compras</option><option>Alojamiento</option><option>Transporte</option><option>Consejos</option><option>Otros</option></select></div><div class="field full"><label for="share-note">Nota</label><textarea id="share-note" name="note" placeholder="¿Qué quieres recordar de este vídeo?"></textarea></div><div class="field full"><button class="btn btn-primary" type="submit">${
+            }</select></div><div class="field full"><label for="share-category">Categoría</label><select id="share-category" name="category">${
+              ["Lugares", "Comida", "Actividades", "Compras", "Alojamiento", "Transporte", "Consejos", "Otros"]
+                .map((category) =>
+                  `<option value="${esc(category)}">${esc(visualLabel(category))}</option>`
+                ).join("")
+            }</select></div><div class="field full"><label for="share-note">Nota</label><textarea id="share-note" name="note" placeholder="¿Qué quieres recordar de este vídeo?"></textarea></div><div class="field full"><button class="btn btn-primary" type="submit">${
               icon("plus")
             } Guardar en Inspiración</button></div></form>`
             : `<div class="insight warning">${
@@ -846,7 +884,7 @@ async function renderInvitation() {
       `<main class="auth-shell invite-shell"><section class="auth-card card"><div class="brand"><span class="brand-mark">旅</span><span>Tabi</span></div><span class="trip-emoji">${invitation.tripEmoji}</span><div><span class="hero-eyebrow" style="color:var(--primary)">Invitación al viaje</span><h1>${
         esc(invitation.tripName)
       }</h1><p><strong>${esc(invitation.creatorName)}</strong> te ha invitado a colaborar como ${
-        ROLE_LABELS[invitation.role]
+        visualLabel(ROLE_LABELS[invitation.role])
       }.</p></div><div class="invitation-role">${
         badge(ROLE_LABELS[invitation.role], invitation.role === "editor" ? "red" : "blue")
       }<span>${
@@ -1230,13 +1268,13 @@ function renderItinerary() {
             esc(item.end)
           }</small></div><div class="event-card ${conflictIds.has(item.id) ? "conflict" : ""}" ${
             item.virtual ? "" : `draggable="true" data-drag-id="${item.id}"`
-          } data-edit-activity="${item.id}"><span class="drag-handle">${
-            item.virtual ? "•" : "⋮⋮"
-          }</span><div class="event-body"><strong>${esc(item.title)}</strong><small>${esc(display.primary)} · ${
-            durationLabel(timeDiff(item.start, item.end))
-          }</small>${display.secondary ? `<span class="event-context">${esc(display.secondary)}</span>` : ""}</div>${
-            activityMapsButton(item)
-          }${
+          } data-edit-activity="${item.id}"><span class="drag-handle" title="${
+            item.virtual ? "Elemento sincronizado" : "Arrastrar para reordenar"
+          }">${item.virtual ? "•" : icon("grip")}</span><div class="event-body"><strong>${
+            esc(item.title)
+          }</strong><small>${esc(display.primary)} · ${durationLabel(timeDiff(item.start, item.end))}</small>${
+            display.secondary ? `<span class="event-context">${esc(display.secondary)}</span>` : ""
+          }</div>${activityMapsButton(item)}${
             item.virtual ? badge("Sincronizado", "blue") : badge(item.status === "done" ? "Realizado" : display.kind)
           }</div></div>`;
         }).join("")
@@ -1270,11 +1308,11 @@ function renderItinerary() {
     }</div></section></aside></div>`;}
   return `<div class="toolbar"><div class="segmented"><button data-itinerary-view="day" class="${
     view === "day" ? "active" : ""
-  }">Día</button><button data-itinerary-view="week" class="${
+  }">☀️ Día</button><button data-itinerary-view="week" class="${
     view === "week" ? "active" : ""
-  }">Semana</button><button data-itinerary-view="overview" class="${
+  }">🗓️ Semana</button><button data-itinerary-view="overview" class="${
     view === "overview" ? "active" : ""
-  }">General</button></div></div><div class="day-strip">${
+  }">🧭 General</button></div></div><div class="day-strip">${
     dates.map((item, index) =>
       `<button class="day-button ${item === date ? "active" : ""}" data-date="${item}"><small>${
         new Intl.DateTimeFormat("es-ES", { weekday: "short" }).format(new Date(`${item}T12:00`))
@@ -1287,13 +1325,27 @@ function renderItinerary() {
 
 function renderPlaces() {
   const places = filtered(store.collection("places"), ["name", "city", "area", "category"]);
-  return `${toolbar(["Todos", ...CATEGORIES.place])}<div class="grid place-grid">${
+  const pendingPhotos = store.collection("places").filter((place) =>
+    !place.photoUrl && !place.photoCheckedAt && googleMapsPlaceLink(place.link)
+  );
+  const photoAction = pendingPhotos.length && session.can(PERMISSIONS.TRIP_EDIT)
+    ? `<button class="btn btn-secondary" type="button" data-complete-place-photos>${
+      icon("image")
+    } Obtener fotos de Maps (${pendingPhotos.length})</button>`
+    : "";
+  return `${toolbar(["Todos", ...CATEGORIES.place], photoAction)}<div class="grid place-grid">${
     places.map((place) =>
-      `<article class="card place-card"><div class="place-cover"><span>${
-        badge(place.status)
-      }</span><span class="place-symbol">${placeEmoji(place.category)}</span><span>${
+      `<article class="card place-card"><div class="place-cover ${place.photoUrl ? "has-photo" : ""}">${
+        place.photoUrl ? `<img class="place-cover-photo" src="${esc(place.photoUrl)}" alt="${esc(place.name)}">` : ""
+      }<span>${badge(place.status)}</span><span class="place-symbol">${placeEmoji(place.category)}</span><span>${
         badge(place.priority, place.priority === "Alta" || place.priority === "Imprescindible" ? "red" : "")
-      }</span></div><div class="place-body"><h3>${esc(place.name)}</h3><p>${
+      }</span>${
+        place.photoUrl
+          ? `<a class="place-photo-credit" href="${
+            esc(place.photoAttributionUrl || place.link || "#")
+          }" target="_blank" rel="noreferrer">Foto: ${esc(place.photoAttributionName || "Google Maps")}</a>`
+          : ""
+      }</div><div class="place-body"><h3>${esc(place.name)}</h3><p>${
         esc(place.description || "Sin descripción")
       }</p><div class="place-admission">${badge(place.admission || "Entrada no indicada", "blue")}${
         Number(place.ticketPrice || 0) ? `<strong>${formatMoney(place.ticketPrice)}</strong>` : ""
@@ -1362,6 +1414,70 @@ function googlePlaceCity(place) {
     item.types?.some((type) => ["locality", "postal_town", "administrative_area_level_2"].includes(type))
   );
   return component?.longText || component?.long_name || "Sin especificar";
+}
+
+function googlePlacePhoto(place) {
+  const photo = place.photos?.[0];
+  if (!photo?.getURI) return {};
+  const attribution = photo.authorAttributions?.[0];
+  return {
+    photoUrl: photo.getURI({ maxWidth: 1200, maxHeight: 720 }),
+    photoAttributionName: attribution?.displayName || "Google Maps",
+    photoAttributionUrl: attribution?.uri || place.googleMapsURI || "",
+  };
+}
+
+function googleMapsPlaceLink(value) {
+  try {
+    const host = new URL(value).hostname.toLocaleLowerCase("en");
+    return host === "maps.app.goo.gl" || ((/^(?:www\.|maps\.)?google\.[a-z.]+$/.test(host) ||
+      host.endsWith(".google.com")) && new URL(value).pathname.includes("/maps"));
+  } catch {
+    return false;
+  }
+}
+
+async function completePlacePhotos(button) {
+  const candidates = store.collection("places").filter((place) =>
+    !place.photoUrl && !place.photoCheckedAt && googleMapsPlaceLink(place.link)
+  );
+  if (!candidates.length) return;
+  button.disabled = true;
+  let completed = 0;
+  let failed = 0;
+  for (const candidate of candidates) {
+    button.textContent = `Consultando Google Maps… ${completed + failed + 1}/${candidates.length}`;
+    try {
+      const { place } = await googlePlaceFromLink(candidate.link);
+      const photo = googlePlacePhoto(place);
+      await store.edit("places", candidate.id, { ...photo, photoCheckedAt: new Date().toISOString() });
+      if (photo.photoUrl) completed++;
+    } catch {
+      failed++;
+    }
+  }
+  toast(
+    completed
+      ? `${completed} ${completed === 1 ? "foto añadida" : "fotos añadidas"}${
+        failed ? ` · ${failed} sin completar` : ""
+      }`
+      : "Google Maps no ha devuelto fotos para estos lugares.",
+    completed ? "success" : "error",
+  );
+  render();
+}
+
+function setFormValue(root, name, value) {
+  let field = root.querySelector(`#field-${name}`);
+  if (!field) {
+    field = document.createElement("input");
+    field.type = "hidden";
+    field.id = `field-${name}`;
+    field.name = name;
+    root.querySelector("form")?.append(field);
+  }
+  field.value = value ?? "";
+  field.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function savedPlaceIcon(place) {
@@ -1439,6 +1555,7 @@ async function googlePlaceFromLink(value) {
         "addressComponents",
         "primaryType",
         "regularOpeningHours",
+        "photos",
       ],
     });
   } else {
@@ -1456,6 +1573,7 @@ async function googlePlaceFromLink(value) {
         "addressComponents",
         "primaryType",
         "regularOpeningHours",
+        "photos",
       ],
       maxResultCount: 1,
       language: "es",
@@ -1469,6 +1587,13 @@ async function googlePlaceFromLink(value) {
 function initializePlaceLinkImport(root) {
   const input = root.querySelector("#field-link");
   if (!input) return;
+  const initialLink = input.value;
+  input.addEventListener("input", () => {
+    if (input.value === initialLink) return;
+    ["photoUrl", "photoAttributionName", "photoAttributionUrl", "photoCheckedAt"].forEach((name) =>
+      setFormValue(root, name, "")
+    );
+  });
   input.insertAdjacentHTML(
     "afterend",
     `<button class="btn btn-secondary" type="button" data-import-google-link>${
@@ -1494,13 +1619,10 @@ function initializePlaceLinkImport(root) {
         lat: place.location.lat(),
         lng: place.location.lng(),
         link: place.googleMapsURI || resolved,
+        ...googlePlacePhoto(place),
       };
       Object.entries(values).forEach(([name, value]) => {
-        const field = root.querySelector(`#field-${name}`);
-        if (field) {
-          field.value = value;
-          field.dispatchEvent(new Event("input", { bubbles: true }));
-        }
+        setFormValue(root, name, value);
       });
       toast("Datos del lugar completados");
     } catch (error) {
@@ -1676,6 +1798,7 @@ function initializeActivityLinks(root) {
         hours: place.regularOpeningHours?.weekdayDescriptions?.join(" · ") || "",
         lat: place.location.lat(),
         lng: place.location.lng(),
+        ...googlePlacePhoto(place),
       };
       quickName.value = place.displayName || quickName.value;
       quickCity.value = googlePlaceCity(place) || quickCity.value;
@@ -1875,6 +1998,7 @@ async function initializeGoogleMap() {
         "googleMapsURI",
         "addressComponents",
         "primaryType",
+        "photos",
       ],
     });
     if (!place.location || !document.querySelector("#google-map")) return;
@@ -1886,7 +2010,10 @@ async function initializeGoogleMap() {
     new AdvancedMarkerElement({ map, position: place.location, title: place.displayName });
     const preview = document.querySelector("#google-place-preview");
     if (!preview) return;
-    preview.innerHTML = `<div class="map-place-preview"><strong>${esc(place.displayName || "Lugar")}</strong><small>${
+    const photo = googlePlacePhoto(place);
+    preview.innerHTML = `<div class="map-place-preview">${
+      photo.photoUrl ? `<img src="${esc(photo.photoUrl)}" alt="${esc(place.displayName || "Lugar")}">` : ""
+    }<strong>${esc(place.displayName || "Lugar")}</strong><small>${
       esc(place.formattedAddress || "Dirección no disponible")
     }</small>${
       session.can(PERMISSIONS.TRIP_EDIT)
@@ -1921,6 +2048,7 @@ async function initializeGoogleMap() {
           lng: place.location.lng(),
           link: place.googleMapsURI || "",
           googlePlaceId: place.id || "",
+          ...photo,
         });
         ui.mapPlaceId = saved.id;
         toast("Lugar guardado en el viaje");
@@ -1970,9 +2098,11 @@ function toolbar(filters = [], extra = "") {
     esc(ui.query)
   }"></div>${
     filters.length
-      ? `<select data-filter style="max-width:190px">${
-        filters.map((f) => `<option value="${esc(f)}" ${ui.filter === f ? "selected" : ""}>${esc(f)}</option>`).join("")
-      }</select>`
+      ? `<div class="filter-control">${icon("filter")}<select data-filter aria-label="Filtrar resultados">${
+        filters.map((f) =>
+          `<option value="${esc(f)}" ${ui.filter === f ? "selected" : ""}>${esc(visualLabel(f))}</option>`
+        ).join("")
+      }</select></div>`
       : ""
   }${extra}</div>`;
 }
@@ -2021,13 +2151,19 @@ function renderPurchases() {
     table(
       ["Producto", "Destino", "Estimado / máximo", "Prioridad", "Estado"],
       items.map((i) =>
-        `<tr><td><span class="cell-main">${esc(i.product)}</span><span class="cell-sub">${esc(i.category)} · para ${
+        `<tr><td><div class="purchase-product">${
+          i.photo
+            ? `<img src="${esc(i.photo)}" alt="Foto de ${esc(i.product)}">`
+            : `<span class="purchase-photo-placeholder">${icon("bag")}</span>`
+        }<span><span class="cell-main">${esc(i.product)}</span><span class="cell-sub">${esc(i.category)} · para ${
           esc(i.recipient || "—")
-        }</span></td><td>${esc(i.city || "—")}<span class="cell-sub">${esc(i.store || "")}</span></td><td>${
-          formatMoney(i.estimatedPrice)
-        }<span class="cell-sub">máx. ${formatMoney(i.maxBudget)}</span></td><td>${
-          badge(i.priority, i.priority === "Alta" ? "red" : "")
-        }</td><td>${badge(i.status)}</td><td>${actions("purchases", i.id)}</td></tr>`
+        }</span></span></div></td><td>${esc(i.city || "—")}<span class="cell-sub">${
+          esc(i.store || "")
+        }</span></td><td>${formatMoney(i.estimatedPrice)}<span class="cell-sub">máx. ${
+          formatMoney(i.maxBudget)
+        }</span></td><td>${badge(i.priority, i.priority === "Alta" ? "red" : "")}</td><td>${badge(i.status)}</td><td>${
+          actions("purchases", i.id)
+        }</td></tr>`
       ),
       "No hay compras",
     )
@@ -2056,6 +2192,44 @@ function renderTasks() {
         emptyState("Nada por aquí", "No hay tareas en esta fase.")
       }</div></section>`
     ).join("")
+  }</div>`;
+}
+
+function orderedNotes() {
+  return [...store.collection("notes")].sort((a, b) =>
+    Number(a.order || 0) - Number(b.order || 0) || String(a.createdAt || "").localeCompare(b.createdAt || "")
+  );
+}
+
+function renderNotes() {
+  const notes = orderedNotes().filter((note) =>
+    !ui.query || searchKey(`${note.title} ${note.content}`).includes(searchKey(ui.query))
+  );
+  return `${toolbar()}<div class="note-list">${
+    notes.map((note, index) =>
+      `<article class="card note-card"><div class="note-order"><span>${
+        index + 1
+      }</span><button class="btn btn-ghost icon-btn" type="button" data-note-move="${note.id}:up" aria-label="Subir nota" title="Subir" ${
+        index === 0 ? "disabled" : ""
+      }>${
+        icon("up")
+      }</button><button class="btn btn-ghost icon-btn" type="button" data-note-move="${note.id}:down" aria-label="Bajar nota" title="Bajar" ${
+        index === notes.length - 1 ? "disabled" : ""
+      }>${icon("down")}</button></div><div class="note-body"><h3>${esc(note.title)}</h3><p>${
+        esc(note.content || "Nota vacía")
+      }</p><small>Actualizada ${
+        formatDate(note.updatedAt, { year: "numeric" })
+      }</small></div><button class="btn btn-ghost icon-btn note-edit" data-edit="notes:${note.id}" aria-label="Editar nota">${
+        icon("edit")
+      }</button></article>`
+    ).join("") ||
+    emptyState(
+      "Todavía no hay notas",
+      "Guarda ideas, recordatorios o cualquier texto útil para el viaje.",
+      session.can(PERMISSIONS.TRIP_EDIT)
+        ? `<button class="btn btn-primary" data-add="notes">${icon("plus")} Crear una nota</button>`
+        : "",
+    )
   }</div>`;
 }
 
@@ -2124,6 +2298,14 @@ function renderBudget() {
   }`;
 }
 
+function bookingPlatform(platform = "Otros") {
+  const key = { Airbnb: "airbnb", Booking: "booking", "En persona": "person" }[platform] || "other";
+  const mark = key === "airbnb" ? "A" : key === "booking" ? "B." : icon(key === "person" ? "users" : "ticket");
+  return `<span class="platform-badge platform-${key}"><span class="platform-mark" aria-hidden="true">${mark}</span>${
+    esc(platform)
+  }</span>`;
+}
+
 function renderStays() {
   const items = filtered(store.collection("stays"), ["name", "city", "address", "reference", "platform", "contact"])
     .sort((a, b) =>
@@ -2143,7 +2325,7 @@ function renderStays() {
         )
       }`;
       return `<section class="card card-pad stay-card"><div class="card-head"><div><div class="stay-badges">${
-        badge(i.platform || "Otros", "blue")
+        bookingPlatform(i.platform || "Otros")
       } ${badge(i.bookingStatus || "Pendiente")}</div><h2>${esc(i.name)}</h2><p>${icon("pin")} ${esc(i.city)}${
         i.address ? ` · ${esc(i.address)}` : ""
       }</p></div>${
@@ -2254,13 +2436,15 @@ function renderInspiration() {
   }<div><strong>Guarda ideas desde tus redes</strong>En Android, instala Tabi y utiliza Compartir → Tabi para elegir el viaje. En iOS esta función automática no está disponible: copia el enlace y añádelo manualmente aquí.</div></div>${
     toolbar(
       ["Todos", "Lugares", "Comida", "Actividades", "Compras", "Alojamiento", "Transporte", "Consejos", "Otros"],
-      `<select data-inspiration-status style="max-width:160px" aria-label="Filtrar por visualización"><option value="Todos" ${
+      `<div class="filter-control filter-control-secondary">${
+        icon("filter")
+      }<select data-inspiration-status aria-label="Filtrar por visualización"><option value="Todos" ${
         ui.inspirationStatus === "Todos" ? "selected" : ""
-      }>Todos</option><option value="No vistos" ${
+      }>${esc(visualLabel("Todos"))}</option><option value="No vistos" ${
         ui.inspirationStatus === "No vistos" ? "selected" : ""
-      }>No vistos</option><option value="Vistos" ${
+      }>${esc(visualLabel("No vistos"))}</option><option value="Vistos" ${
         ui.inspirationStatus === "Vistos" ? "selected" : ""
-      }>Vistos</option></select>`,
+      }>${esc(visualLabel("Vistos"))}</option></select></div>`,
     )
   }<div class="grid grid-3 inspiration-grid">${
     items.map((item) => {
@@ -2340,11 +2524,11 @@ function renderSettings() {
   }</strong></div><div><span class="cell-sub">FECHAS</span><strong>${formatDate(trip.startDate)} — ${
     formatDate(trip.endDate)
   }</strong></div><div><span class="cell-sub">TU ROL</span><strong>${
-    ROLE_LABELS[session.currentMembership.role]
+    visualLabel(ROLE_LABELS[session.currentMembership.role])
   }</strong></div></div></section>
       <section class="card card-pad project-transfer"><div class="card-head"><div><h2>Exportar e importar proyecto</h2><p>Copia completa editable en formato JSON</p></div><span class="stat-icon amber">${
     icon("download")
-  }</span></div><p class="cell-sub">Incluye la configuración del viaje y todas sus actividades, lugares, tareas, presupuesto, fondos, alojamientos, transportes, reservas, documentos e inspiración. No incluye cuentas, miembros, invitaciones ni contraseñas.</p><div class="project-transfer-actions"><button class="btn btn-secondary" type="button" data-export-project>${
+  }</span></div><p class="cell-sub">Incluye la configuración del viaje y todas sus actividades, lugares, tareas, notas, presupuesto, fondos, alojamientos, transportes, reservas, documentos e inspiración. No incluye cuentas, miembros, invitaciones ni contraseñas.</p><div class="project-transfer-actions"><button class="btn btn-secondary" type="button" data-export-project>${
     icon("download")
   } Exportar para ChatGPT</button>${
     session.can(PERMISSIONS.TRIP_EDIT)
@@ -2368,9 +2552,11 @@ function renderSettings() {
     </div><aside class="section-stack">
       <section class="card card-pad"><div class="card-head"><div><h2>Preferencias</h2><p>Solo afectan a este dispositivo</p></div></div><form id="settings-form" class="form-grid"><div class="field full"><label>Tema</label><select name="theme"><option value="system" ${
     s.theme === "system" ? "selected" : ""
-  }>Sistema</option><option value="light" ${s.theme === "light" ? "selected" : ""}>Claro</option><option value="dark" ${
-    s.theme === "dark" ? "selected" : ""
-  }>Oscuro</option></select></div><div class="field full"><label>1 JPY equivale a EUR</label><input type="number" name="exchangeRate" step="0.0001" value="${s.exchangeRate}"></div><div class="field"><label>Inicio</label><input type="time" name="dayStart" value="${s.dayStart}"></div><div class="field"><label>Fin</label><input type="time" name="dayEnd" value="${s.dayEnd}"></div><div class="field full"><button class="btn btn-primary" type="submit">Guardar</button></div></form></section>
+  }>${visualLabel("Sistema")}</option><option value="light" ${s.theme === "light" ? "selected" : ""}>${
+    visualLabel("Claro")
+  }</option><option value="dark" ${s.theme === "dark" ? "selected" : ""}>${
+    visualLabel("Oscuro")
+  }</option></select></div><div class="field full"><label>1 JPY equivale a EUR</label><input type="number" name="exchangeRate" step="0.0001" value="${s.exchangeRate}"></div><div class="field"><label>Inicio</label><input type="time" name="dayStart" value="${s.dayStart}"></div><div class="field"><label>Fin</label><input type="time" name="dayEnd" value="${s.dayEnd}"></div><div class="field full"><button class="btn btn-primary" type="submit">Guardar</button></div></form></section>
       <section class="card card-pad"><div class="card-head"><div><h2>Tu cuenta</h2><p>${
     esc(session.currentUser.email)
   }</p></div>${
@@ -2391,11 +2577,11 @@ function memberRow(member) {
     isSelf ? " · Tú" : ""
   }</strong><small>${esc(member.user.email)} · desde ${formatDate(member.joinedAt)}</small></div>${
     manageable
-      ? `<select data-member-role="${member.user.id}" style="width:110px"><option value="editor" ${
+      ? `<select data-member-role="${member.user.id}" style="width:135px"><option value="editor" ${
         member.role === "editor" ? "selected" : ""
-      }>Editor</option><option value="viewer" ${
-        member.role === "viewer" ? "selected" : ""
-      }>Viewer</option></select><button class="btn btn-ghost icon-btn" data-transfer-owner="${member.user.id}" aria-label="Transferir propiedad" title="Transferir propiedad">${
+      }>${visualLabel("Editor")}</option><option value="viewer" ${member.role === "viewer" ? "selected" : ""}>${
+        visualLabel("Lector")
+      }</option></select><button class="btn btn-ghost icon-btn" data-transfer-owner="${member.user.id}" aria-label="Transferir propiedad" title="Transferir propiedad">${
         icon("users")
       }</button><button class="btn btn-ghost icon-btn" data-remove-member="${member.user.id}" aria-label="Expulsar">${
         icon("trash")
@@ -2409,7 +2595,7 @@ function invitationRow(invitation) {
   return `<div class="list-item"><span class="stat-icon ${invitation.status === "active" ? "" : "amber"}">${
     icon("ticket")
   }</span><div class="list-item-main"><strong>${
-    ROLE_LABELS[invitation.role]
+    visualLabel(ROLE_LABELS[invitation.role])
   } · ${invitation.uses}/${invitation.maxUses} usos</strong><small>Creada por ${esc(invitation.creatorName)} · vence ${
     formatDate(invitation.expiresAt.slice(0, 10))
   }</small></div>${
@@ -2467,6 +2653,7 @@ function openEditor(collection, idValue) {
     tasks: ["task", "Tarea"],
     purchases: ["purchase", "Compra"],
     expenses: ["expense", "Gasto"],
+    notes: ["note", "Nota"],
     funds: ["fund", "Aportación"],
     stays: ["stay", "Alojamiento"],
     transports: ["transport", "Transporte"],
@@ -2488,6 +2675,7 @@ function openEditor(collection, idValue) {
     },
     task: { phase: "Antes", priority: "Media", status: "Pendiente" },
     purchase: { status: "Pendiente", priority: "Media", actualPrice: 0 },
+    note: { order: Math.max(0, ...store.collection("notes").map((note) => Number(note.order || 0))) + 1 },
     expense: { date: todayIso(), currency: "JPY", paymentStatus: "Pendiente", person: "Ambos" },
     fund: { title: "Aportación", contributor: session.currentUser.name, date: todayIso(), currency: "JPY" },
     stay: {
@@ -2547,6 +2735,7 @@ function openEditor(collection, idValue) {
       ) {
         throw new Error("La llegada del transporte no puede ser anterior a la salida.");
       }
+      if (type === "note" && !item) values.order = defaults.order;
       try {
         item ? await store.edit(collection, item.id, values) : await store.add(collection, values);
       } catch (error) {
@@ -2579,6 +2768,18 @@ function openEditor(collection, idValue) {
 }
 
 function bindCommon() {
+  app.querySelectorAll(".place-cover-photo").forEach((image) =>
+    image.addEventListener("error", () => {
+      const cover = image.closest(".place-cover");
+      cover?.classList.remove("has-photo");
+      cover?.querySelector(".place-photo-credit")?.remove();
+      image.remove();
+    })
+  );
+  app.querySelector("[data-complete-place-photos]")?.addEventListener(
+    "click",
+    (event) => completePlacePhotos(event.currentTarget),
+  );
   app.querySelectorAll("[data-route]").forEach((button) =>
     button.addEventListener("click", () => {
       const route = button.dataset.route;
@@ -2628,6 +2829,7 @@ function bindCommon() {
         places: "places",
         purchases: "purchases",
         tasks: "tasks",
+        notes: "notes",
         budget: "expenses",
         stays: "stays",
         transport: "transports",
@@ -2757,6 +2959,9 @@ function bindRoute() {
       }
     })
   );
+  app.querySelectorAll("[data-note-move]").forEach((button) =>
+    button.addEventListener("click", () => moveNote(button.dataset.noteMove))
+  );
   bindDrag();
   app.querySelector("[data-add-fund]")?.addEventListener("click", () => openEditor("funds"));
   if (ui.route === "map") {
@@ -2807,6 +3012,33 @@ function bindRoute() {
   app.querySelector("[data-password]")?.addEventListener("click", changePasswordDialog);
   app.querySelector("[data-delete-trip]")?.addEventListener("click", deleteTrip);
   app.querySelector("[data-logout]")?.addEventListener("click", performLogout);
+}
+
+async function moveNote(value) {
+  const [id, direction] = value.split(":");
+  const notes = orderedNotes();
+  const index = notes.findIndex((note) => note.id === id);
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || targetIndex < 0 || targetIndex >= notes.length) return;
+  const target = notes[targetIndex];
+  let order;
+  if (direction === "up") {
+    const before = notes[targetIndex - 1];
+    order = before
+      ? (Number(before.order || targetIndex - 1) + Number(target.order || targetIndex)) / 2
+      : Number(target.order || targetIndex) - 1;
+  } else {
+    const after = notes[targetIndex + 1];
+    order = after
+      ? (Number(target.order || targetIndex) + Number(after.order || targetIndex + 1)) / 2
+      : Number(target.order || targetIndex) + 1;
+  }
+  try {
+    await store.edit("notes", id, { order });
+    render();
+  } catch (error) {
+    toast(error.message || "No se ha podido mover la nota.", "error");
+  }
 }
 
 function bindDrag() {

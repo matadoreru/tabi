@@ -1,4 +1,4 @@
-import { formatDate, searchKey } from "./ui.js";
+import { formatDate, searchKey, visualLabel, visualSymbol } from "./ui.js";
 import { EMOJI_GROUPS } from "./emojis.js";
 
 function assertEquals(actual, expected) {
@@ -23,6 +23,13 @@ Deno.test("la PWA se registra como destino para enlaces compartidos", async () =
 Deno.test("normaliza búsquedas sin distinguir mayúsculas ni tildes", () => {
   assertEquals(searchKey("  JAPÓN "), "japon");
   assertEquals(searchKey("España"), "espana");
+});
+
+Deno.test("los estados y filtros combinan símbolos reconocibles con texto", () => {
+  assertEquals(visualLabel("Pendiente"), "⏳ Pendiente");
+  assertEquals(visualLabel("Airbnb"), "🏠 Airbnb");
+  assertEquals(visualSymbol("Confirmada"), "✅");
+  assertEquals(visualLabel("Valor personalizado"), "Valor personalizado");
 });
 
 Deno.test("el autocompletado oculta las opciones que no coinciden", async () => {
@@ -70,5 +77,18 @@ Deno.test("el mapa muestra el detalle antes de la lista y permite limpiar la sel
   }
   if (!source.includes('map.addListener("click", (event) =>') || !source.includes("clearSelectedPlace();")) {
     throw new Error("El mapa debe limpiar la selección al pulsar fuera de un marcador");
+  }
+});
+
+Deno.test("la interfaz integra notas, fotos y un asa de arrastre inequívoca", async () => {
+  const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (!source.includes('["notes", "Notas", "note"]') || !source.includes("function renderNotes()")) {
+    throw new Error("Falta el apartado de notas");
+  }
+  if (!source.includes('type: "image"') || !source.includes('"photos"')) {
+    throw new Error("Falta el soporte visual de compras o Google Places");
+  }
+  if (source.includes("⋮⋮") || !source.includes('icon("grip")')) {
+    throw new Error("El asa de actividades debe usar una única columna de puntos");
   }
 });
