@@ -135,7 +135,7 @@ async function tripCollectionRoutes(request, user) {
           Number(input.travelers || 1),
           Number(input.budget || 0),
           input.currency || "JPY",
-          JSON.stringify(extra),
+          extra,
           1,
           timestamp,
           timestamp,
@@ -187,7 +187,7 @@ async function tripRoutes(request, user, tripId) {
         Number(merged.travelers),
         Number(merged.budget),
         merged.currency,
-        JSON.stringify(extra),
+        extra,
         timestamp,
         user.id,
         tripId,
@@ -260,7 +260,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     await db.prepare(
       `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
     )
-      .run(entityId, tripId, JSON.stringify(data), 1, timestamp, timestamp, user.id, user.id);
+      .run(entityId, tripId, data, 1, timestamp, timestamp, user.id, user.id);
     await audit(tripId, user.id, "entity.created", collection, entityId, { title });
     emit(tripId, user, "entity.created", collection, entityId);
     return json({
@@ -283,7 +283,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     const result = await db.prepare(
       `UPDATE ${table} SET data=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND trip_id=? AND version=?`,
     )
-      .run(JSON.stringify(data), timestamp, user.id, id, tripId, current.version);
+      .run(data, timestamp, user.id, id, tripId, current.version);
     if (!result.changes) conflict(current.version + 1);
     await audit(tripId, user.id, "entity.updated", collection, id, {
       title: entityTitle(collection, data),
@@ -706,7 +706,7 @@ async function importTripArchive(archive, user, tripId) {
       trip.travelers,
       trip.budget,
       trip.currency,
-      JSON.stringify(trip.extra),
+      trip.extra,
       timestamp,
       user.id,
       tripId,
@@ -715,7 +715,7 @@ async function importTripArchive(archive, user, tripId) {
       for (const item of prepared[collection]) {
         await db.prepare(
           `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
-        ).run(item.id, tripId, JSON.stringify(item.data), 1, timestamp, timestamp, user.id, user.id);
+        ).run(item.id, tripId, item.data, 1, timestamp, timestamp, user.id, user.id);
       }
     }
     await audit(tripId, user.id, "trip.archive_imported", "trip", tripId, { entityCount, schemaVersion: 1 });
@@ -743,7 +743,7 @@ async function importTripData(request, user, tripId) {
         validateEntity(collection, data);
         await db.prepare(
           `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
-        ).run(newId(collection.slice(0, 3)), tripId, JSON.stringify(data), 1, timestamp, timestamp, user.id, user.id);
+        ).run(newId(collection.slice(0, 3)), tripId, data, 1, timestamp, timestamp, user.id, user.id);
         count++;
       }
     }
@@ -880,7 +880,7 @@ function validateInvitation(row) {
 async function audit(tripId, userId, action, entityType, entityId, metadata) {
   await db.prepare(
     "INSERT INTO trip_activity_logs(id,trip_id,user_id,action,entity_type,entity_id,metadata,created_at) VALUES (?,?,?,?,?,?,?,?)",
-  ).run(newId("log"), tripId, userId, action, entityType, entityId, JSON.stringify(metadata || {}), now());
+  ).run(newId("log"), tripId, userId, action, entityType, entityId, metadata || {}, now());
 }
 function jsonObject(value) {
   if (!value) return {};

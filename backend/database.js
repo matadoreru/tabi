@@ -36,9 +36,10 @@ function postgresQuery(source) {
 }
 
 function databaseParameters(parameters) {
+  const executor = activeSql();
   return parameters.map((value) =>
     value && typeof value === "object" && !(value instanceof Date) && !(value instanceof Uint8Array)
-      ? JSON.stringify(value)
+      ? executor.json(value)
       : value
   );
 }
@@ -192,6 +193,21 @@ const migrations = [
     fetched_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY(base_currency, quote_currency)
   );
+  `,
+  `
+  ${
+    Object.values(ENTITY_TABLES).map((table) => `
+    UPDATE ${table}
+    SET data = (data #>> '{}')::jsonb
+    WHERE jsonb_typeof(data) = 'string';
+  `).join("\n")
+  }
+  UPDATE trips
+  SET data = (data #>> '{}')::jsonb
+  WHERE jsonb_typeof(data) = 'string';
+  UPDATE trip_activity_logs
+  SET metadata = (metadata #>> '{}')::jsonb
+  WHERE jsonb_typeof(metadata) = 'string';
   `,
 ];
 
