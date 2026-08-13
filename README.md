@@ -155,47 +155,6 @@ usuario, pero todas las operaciones vuelven a validarse y autorizarse en el serv
 
 </details>
 
-## 🗃️ Datos, dinero y compatibilidad
-
-- PostgreSQL es la fuente de verdad y permite edición concurrente.
-- Los importes se conservan en su moneda original y como unidades menores exactas.
-- Cambiar la moneda principal modifica la presentación, no sobrescribe el histórico.
-- El modo automático de cambio usa Frankfurter desde el backend y mantiene el último valor conocido.
-- Las fotografías se guardan en `media_assets`, fuera del JSON de las entidades.
-- La importación de proyectos `.tabi-trip.json` acepta versiones anteriores y se realiza en una transacción.
-- Los datos antiguos de `localStorage` pueden importarse al crear el primer viaje.
-
-El formato portable actual es `schemaVersion: 3`. Las imágenes solo se convierten a base64 dentro del archivo de
-exportación; al importarlas vuelven al almacenamiento de medios.
-
-<details>
-<summary><strong>Ver modelo de datos resumido</strong></summary>
-
-- `users`, `sessions` y `account_recovery_codes`: identidad y acceso.
-- `trips`, `trip_members` y `trip_invitations`: viajes y colaboración.
-- `trip_activity_logs`: historial auditable.
-- Tablas independientes para actividades, lugares, tareas, compras, reservas, alojamientos y transportes.
-- `financial_transactions` y `expense_splits`: movimientos canónicos y reparto exacto.
-- `media_assets`: contenido binario autorizado por viaje.
-
-Todas las entidades editables utilizan versión optimista, auditoría y claves foráneas al viaje.
-
-</details>
-
-## 🔐 Seguridad y colaboración
-
-- Cookies de sesión `HttpOnly`, `SameSite=Lax` y `Secure` en producción.
-- PBKDF2-SHA-256 con sal individual para las contraseñas.
-- Tokens de sesión e invitación almacenados únicamente como hash.
-- Protección de origen, CSP, límites de tamaño y rate limiting.
-- Autorización por capacidades: **Owner**, **Editor** y **Viewer**.
-- Consultas siempre limitadas al viaje para evitar acceso indirecto a recursos.
-- Control de concurrencia con versiones y respuesta `409 VERSION_CONFLICT`.
-- Actualización incremental entre usuarios mediante Server-Sent Events.
-- Códigos opcionales de recuperación de cuenta, de un solo uso.
-
-Para producción, usa siempre HTTPS, una contraseña PostgreSQL robusta y copias periódicas mediante `pg_dump`.
-
 ## 📚 Documentación
 
 | Documento                                      | Contenido                                                                          |
@@ -204,11 +163,6 @@ Para producción, usa siempre HTTPS, una contraseña PostgreSQL robusta y copias
 | [.env.example](./.env.example)                 | Variables de entorno disponibles.                                                  |
 | [compose.yml](./compose.yml)                   | Servicios y volúmenes utilizados en Docker.                                        |
 | [manifest.webmanifest](./manifest.webmanifest) | Instalación y accesos directos de la PWA.                                          |
-
-## 🛣️ Escalado futuro
-
-La instalación actual funciona con una instancia de aplicación y PostgreSQL. Para ejecutar varias réplicas, los eventos
-SSE deberán coordinarse con PostgreSQL `LISTEN/NOTIFY`, Redis u otro bus compartido.
 
 ---
 
