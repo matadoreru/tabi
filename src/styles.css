@@ -352,6 +352,87 @@ h3,
 .dashboard-grid > * {
   min-width: 0;
 }
+.dashboard-home-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr) minmax(280px, .82fr);
+  grid-template-areas:
+    "budget tasks activity"
+    "purchases todo activity";
+  gap: 18px;
+  align-items: stretch;
+}
+.dashboard-home-layout > * {
+  min-width: 0;
+}
+.dashboard-budget-card {
+  grid-area: budget;
+}
+.dashboard-tasks-card {
+  grid-area: tasks;
+}
+.dashboard-purchases-card {
+  grid-area: purchases;
+}
+.dashboard-todo-card {
+  grid-area: todo;
+}
+.dashboard-activity-card {
+  grid-area: activity;
+}
+.dashboard-purchases-card,
+.dashboard-todo-card,
+.dashboard-activity-card {
+  min-height: 390px;
+}
+.dashboard-budget-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.dashboard-budget-total > span,
+.dashboard-budget-meta,
+.dashboard-task-summary small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.dashboard-budget-total .money-pair {
+  font-size: 24px;
+}
+.dashboard-budget-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 10px;
+}
+.dashboard-task-summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 2px 13px;
+}
+.dashboard-task-summary .stat-icon {
+  grid-row: 1 / span 2;
+}
+.dashboard-task-summary div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.dashboard-task-summary strong {
+  font-size: 28px;
+  line-height: 1;
+}
+.dashboard-task-summary div span {
+  color: var(--muted);
+}
+.dashboard-task-summary small {
+  grid-column: 2;
+}
+.dashboard-activity-card .activity-feed {
+  align-content: start;
+}
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -2536,6 +2617,16 @@ textarea {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
+  .dashboard-home-layout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "budget tasks"
+      "purchases todo"
+      "activity activity";
+  }
+  .dashboard-activity-card {
+    min-height: 0;
+  }
   .planner-layout {
     grid-template-columns: 1fr;
   }
@@ -2564,6 +2655,20 @@ textarea {
   }
   .content-map {
     padding-inline: 8px;
+  }
+  .dashboard-home-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "budget"
+      "tasks"
+      "purchases"
+      "todo"
+      "activity";
+  }
+  .dashboard-purchases-card,
+  .dashboard-todo-card,
+  .dashboard-activity-card {
+    min-height: 0;
   }
   .toolbar .section-add {
     margin-left: 0;

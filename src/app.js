@@ -2,7 +2,6 @@ import { CATEGORIES } from "./data.js";
 import {
   alternateCurrency,
   convertCurrency,
-  currencyDefinition,
   currencyOptions,
   rateBetween,
   rateKey,
@@ -1607,8 +1606,6 @@ function renderDashboard() {
   const date = today >= trip.startDate && today <= trip.endDate
     ? today
     : allDates.find((item) => item >= today) || trip.startDate;
-  const activities = activitiesForDate(date).sort((a, b) => a.start.localeCompare(b.start));
-  const upcoming = activities[0];
   const expenses = normalizedExpenses();
   const purchases = normalizedPurchases();
   const stays = normalizedStays();
@@ -1624,112 +1621,21 @@ function renderDashboard() {
     (sum, item) => sum + itemToPrimary(item.estimatedPrice, item),
     0,
   );
-  const nextTransport =
-    [...store.collection("transports")].filter((item) => item.departureDate >= today).sort((a, b) =>
-      `${a.departureDate}${a.departureTime}`.localeCompare(`${b.departureDate}${b.departureTime}`)
-    )[0];
   const countdown = daysUntil(trip.startDate);
   const phaseCopy = tripPhaseCopy(phase, {
     daysUntil: Math.max(0, countdown),
     day: phase === TRIP_PHASES.DURING ? tripDay(today) : 1,
     totalDays: allDates.length,
   });
-  const currentStay = store.collection("stays").find((item) => item.checkInDate <= today && item.checkOutDate >= today);
-  const pendingReservations = store.collection("reservations").filter((item) =>
-    !["Confirmada", "Realizada", "Cancelada"].includes(item.status)
+  const budgetUsed = Math.min(100, Math.max(0, summary.spent / Math.max(summary.budget, 1) * 100));
+  const highPriorityTasks = pendingTasks.filter((task) => task.priority === "Alta").length;
+  const sortedPendingTasks = [...pendingTasks].sort((a, b) =>
+    Number(b.priority === "Alta") - Number(a.priority === "Alta") ||
+    String(a.dueDate || "9999-12-31").localeCompare(String(b.dueDate || "9999-12-31"))
   );
-  const visitedPlaces = store.collection("places").filter((item) => item.status === "Visitado").length;
-  const completedActivities = store.collection("activities").filter((item) => item.status === "done").length;
-  const settlementTransfers = store.collection("settlementTransfers");
-  const contextualStats = phase === TRIP_PHASES.BEFORE
-    ? [
-      statCard(
-        "calendar",
-        "Días para salir",
-        Math.max(0, countdown),
-        `${pendingReservations.length} reservas pendientes`,
-        "red",
-      ),
-      statCard(
-        "wallet",
-        "Presupuesto restante",
-        money(summary.remaining),
-        `${Math.round(summary.spent / Math.max(summary.budget, 1) * 100)}% utilizado`,
-        "",
-        true,
-      ),
-      statCard("ticket", "Reservas por confirmar", pendingReservations.length, "Revisa fechas límite", "amber"),
-      statCard(
-        "check",
-        "Tareas pendientes",
-        pendingTasks.length,
-        `${pendingTasks.filter((task) => task.priority === "Alta").length} de prioridad alta`,
-        "",
-      ),
-    ]
-    : phase === TRIP_PHASES.DURING
-    ? [
-      statCard("clock", "Próximo evento", upcoming?.start || "—", upcoming?.title || "Sin planes", "red"),
-      statCard(
-        "train",
-        "Próximo transporte",
-        nextTransport?.departureTime || "—",
-        nextTransport ? `${nextTransport.origin} → ${nextTransport.destination}` : "Sin trayectos",
-        "amber",
-      ),
-      statCard(
-        "bed",
-        "Alojamiento actual",
-        currentStay?.name || "—",
-        currentStay?.city || "Sin alojamiento para hoy",
-        "",
-      ),
-      statCard("wallet", "Disponible", money(summary.remaining), `${primaryMoney(summary.spent)} gastados`, "", true),
-    ]
-    : [
-      statCard("wallet", "Gasto final", money(summary.spent), `de ${primaryMoney(summary.budget)}`, "red", true),
-      statCard("pin", "Lugares visitados", visitedPlaces, `${store.collection("places").length} guardados`, ""),
-      statCard(
-        "check",
-        "Planes realizados",
-        completedActivities,
-        `${store.collection("activities").length} actividades`,
-        "",
-      ),
-      statCard(
-        "users",
-        "Ajustes pendientes",
-        settlementTransfers.length,
-        settlementTransfers.length ? "Revisa quién debe pagar" : "Cuentas equilibradas",
-        "amber",
-      ),
-    ];
-  const focusTitle = phase === TRIP_PHASES.BEFORE
-    ? "Antes de salir"
-    : phase === TRIP_PHASES.DURING
-    ? "Para hoy"
-    : "Cierre del viaje";
-  const focusDescription = phase === TRIP_PHASES.BEFORE
+  const preparationDescription = phase === TRIP_PHASES.BEFORE
     ? "Lo siguiente que conviene preparar"
-    : phase === TRIP_PHASES.DURING
-    ? "Pendientes que aún requieren atención"
-    : "Últimos pasos para dejar todo cerrado";
-  const focusItems = phase === TRIP_PHASES.AFTER
-    ? settlementTransfers.slice(0, 4).map((item) =>
-      `<div class="list-item"><span class="stat-icon amber">${
-        icon("users")
-      }</span><div class="list-item-main"><strong>${esc(memberName(item.fromUserId, "Viajero"))} → ${
-        esc(memberName(item.toUserId, "Viajero"))
-      }</strong><small>${primaryMoney(moneyToNumber(item.amount), item.amount.currency)}</small></div></div>`
-    ).join("")
-    : pendingTasks.slice(0, 4).map(taskRow).join("");
-  const categoryTotals = groupTotals(
-    store.collection("financialTransactions").length
-      ? canonicalChartItems()
-      : budgetChartItems(expenses, purchases, stays, transports),
-    "category",
-  );
-  const max = Math.max(...categoryTotals.map(([, value]) => value), 1);
+    : "Checklist de preparación del viaje";
   return `<div class="section-stack">
     <section class="hero card"><div><div class="hero-eyebrow">${phaseCopy.eyebrow}</div><h2>${
     esc(trip.name)
@@ -1742,67 +1648,53 @@ function renderDashboard() {
       ? `<button class="btn" data-route="today">Abrir modo Hoy ${icon("arrow")}</button>`
       : `<button class="btn" data-go-date="${date}">Ver itinerario ${icon("arrow")}</button>`
   }</div></section>
-    <div class="grid grid-4 stats-mobile">
-      ${contextualStats.join("")}
-    </div>
-    <div class="grid dashboard-grid"><div class="section-stack">
-      <section class="card card-pad"><div class="card-head"><div><h2>${
-    date === today ? "Itinerario de hoy" : `Día ${tripDay(date)} · ${formatDate(date)}`
-  }</h2><p>${activities.length} eventos planificados</p></div><button class="btn btn-ghost" data-go-date="${date}">Ver día ${
+    <div class="dashboard-home-layout">
+      <section class="card card-pad dashboard-budget-card"><div class="card-head"><div><h2>Presupuesto</h2><p>Estado general del viaje</p></div><button class="btn btn-ghost" data-route="budget">Ver detalle ${
     icon("chevron")
-  }</button></div>${miniTimeline(activities)}</section>
-      <section class="card card-pad"><div class="card-head"><div><h2>Gastos por categoría</h2><p>Importes reales en ${
-    esc(currencyDefinition(trip.currency).name.toLocaleLowerCase("es"))
-  }</p></div>${money(summary.spent)}</div><div class="chart-bars">${
-    categoryTotals.map(([label, value]) =>
-      `<div class="chart-column"><div class="chart-bar" style="height:${Math.max(3, value / max * 100)}%" data-value="${
-        primaryMoney(value)
-      }"></div><span class="chart-label">${esc(label)}</span></div>`
-    ).join("")
+  }</button></div><div class="dashboard-budget-total"><span>Disponible</span>${
+    money(summary.remaining)
+  }</div><div class="progress red" aria-label="${
+    Math.round(budgetUsed)
+  }% del presupuesto utilizado"><span style="width:${budgetUsed}%"></span></div><div class="dashboard-budget-meta"><span>${
+    money(summary.spent)
+  } gastado</span><span>${money(summary.budget)} total</span></div></section>
+
+      <section class="card card-pad dashboard-tasks-card"><div class="card-head"><div><h2>Tareas</h2><p>Resumen de pendientes</p></div><button class="btn btn-ghost" data-route="tasks">Ver todas ${
+    icon("chevron")
+  }</button></div><div class="dashboard-task-summary"><span class="stat-icon red">${
+    icon("check")
+  }</span><div><strong>${pendingTasks.length}</strong><span>pendientes</span></div><small>${
+    highPriorityTasks ? `${highPriorityTasks} de prioridad alta` : "Sin tareas urgentes"
+  }</small></div></section>
+
+      <section class="card card-pad dashboard-purchases-card"><div class="card-head"><div><h2>Compras pendientes</h2><p>${
+    money(pendingPurchaseTotal)
+  } previstos</p></div><button class="btn btn-ghost" data-route="purchases">Ver todas ${
+    icon("chevron")
+  }</button></div><div class="item-list">${
+    pendingPurchases.slice(0, 5).map((item) =>
+      `<div class="list-item"><span class="stat-icon red">${icon("bag")}</span><div class="list-item-main"><strong>${
+        esc(item.product)
+      }</strong><small>${esc(item.city || "Sin ciudad")} · ${
+        primaryMoney(item.estimatedPrice, itemCurrency(item))
+      }</small></div></div>`
+    ).join("") || emptyState("Sin compras pendientes", "No queda nada por comprar para este viaje.")
   }</div></section>
-    </div><aside class="section-stack">
-      <section class="card card-pad"><div class="card-head"><div><h3>Progreso del viaje</h3><p>${
-    store.collection("places").filter((p) => p.status === "Planeado").length
-  } lugares ya planificados</p></div></div><div class="progress red"><span style="width:${
-    Math.min(
-      100,
-      store.collection("places").filter((p) => p.assignedDate).length / Math.max(1, store.collection("places").length) *
-        100,
-    )
-  }%"></span></div><div class="legend"><span>Planificado</span><span style="--dot:var(--surface-2)">Por organizar</span></div></section>
-      <section class="card card-pad"><div class="card-head"><div><h3>${focusTitle}</h3><p>${focusDescription}</p></div></div><div class="item-list">${
-    focusItems ||
-    emptyState(
-      "Todo listo",
-      phase === TRIP_PHASES.AFTER ? "No quedan ajustes entre viajeros." : "No quedan tareas pendientes.",
-    )
+
+      <section class="card card-pad dashboard-todo-card"><div class="card-head"><div><h2>Todo antes de salir</h2><p>${preparationDescription}</p></div><button class="btn btn-ghost" data-route="tasks">Ver TODO ${
+    icon("chevron")
+  }</button></div><div class="item-list todo-list">${
+    sortedPendingTasks.slice(0, 5).map(taskRow).join("") ||
+    emptyState("Todo listo", "No quedan tareas pendientes antes de salir.")
   }</div></section>
-      ${
-    phase === TRIP_PHASES.AFTER
-      ? `<section class="card card-pad"><div class="card-head"><div><h3>Resumen del viaje</h3><p>Conserva o reutiliza este plan</p></div></div><div class="section-stack"><button class="btn btn-secondary" data-export-project>${
-        icon("download")
-      } Exportar proyecto</button><button class="btn btn-secondary" data-trip-list>${
-        icon("file")
-      } Duplicar desde Mis viajes</button></div></section>`
-      : `<section class="card card-pad"><div class="card-head"><div><h3>Compras pendientes</h3><p>${
-        money(pendingPurchaseTotal)
-      } previstos</p></div></div><div class="item-list">${
-        pendingPurchases.slice(0, 3).map((item) =>
-          `<div class="list-item"><span class="stat-icon red">${
-            icon("bag")
-          }</span><div class="list-item-main"><strong>${esc(item.product)}</strong><small>${
-            esc(item.city || "Sin ciudad")
-          } · ${primaryMoney(item.estimatedPrice, itemCurrency(item))}</small></div></div>`
-        ).join("")
-      }</div></section>`
-  }
-      <section class="card card-pad"><div class="card-head"><div><h3>Actividad reciente ${
+
+      <section class="card card-pad dashboard-activity-card"><div class="card-head"><div><h2>Actividad reciente ${
     ui.unseenChanges ? `<span class="badge red">${ui.unseenChanges} nuevas</span>` : ""
-  }</h3><p>Cambios de todo el equipo</p></div></div><div class="activity-feed">${
-    store.collection("logs").slice(0, 5).map(activityLogRow).join("") ||
+  }</h2><p>Cambios de todo el equipo</p></div></div><div class="activity-feed">${
+    store.collection("logs").slice(0, 10).map(activityLogRow).join("") ||
     `<p class="cell-sub">Todavía no hay actividad.</p>`
   }</div></section>
-    </aside></div>
+    </div>
   </div>`;
 }
 
