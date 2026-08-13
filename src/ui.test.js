@@ -266,3 +266,17 @@ Deno.test("los viajes en grupo integran reparto, votación, modo Hoy y utilidade
     if (!database.includes(table)) throw new Error(`Falta persistencia para ${table}`);
   }
 });
+
+Deno.test("el buscador global conserva el cursor al actualizar resultados", async () => {
+  const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (!app.includes("globalSearch.selectionStart") || !app.includes("nextSearch?.setSelectionRange")) {
+    throw new Error("El buscador perdería la posición del cursor al volver a renderizarse.");
+  }
+});
+
+Deno.test("Dashboard y Presupuesto importan sus operaciones monetarias", async () => {
+  const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (!/import \{[^}]*\bconvertMoney\b[^}]*\} from "\.\/money\.js";/s.test(app)) {
+    throw new Error("convertMoney debe importarse antes de renderizar importes canónicos.");
+  }
+});

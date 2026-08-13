@@ -47,7 +47,7 @@ import { session } from "./session.js";
 import { PERMISSIONS, ROLE_LABELS } from "./permissions.js";
 import { initializeImageLightbox } from "./lightbox.js";
 import { canonicalBudgetSummary } from "./finance.js";
-import { decimalToMinor, minorToDecimal, moneyToNumber } from "./money.js";
+import { convertMoney, decimalToMinor, minorToDecimal, moneyToNumber } from "./money.js";
 import { NAVIGATION, ROUTE_DESCRIPTIONS, ROUTE_LABELS } from "./navigation.js";
 import { browserTimeZone, timeZoneOptions, todayInTimeZone } from "./time.js";
 import { exportTripIcs } from "./calendar.js";
@@ -4706,9 +4706,13 @@ function bindCommon() {
   );
   const globalSearch = app.querySelector("[data-global-search]");
   globalSearch?.addEventListener("input", () => {
+    const cursorStart = globalSearch.selectionStart ?? globalSearch.value.length;
+    const cursorEnd = globalSearch.selectionEnd ?? cursorStart;
     ui.globalQuery = globalSearch.value;
     render();
-    app.querySelector("[data-global-search]")?.focus();
+    const nextSearch = app.querySelector("[data-global-search]");
+    nextSearch?.focus();
+    nextSearch?.setSelectionRange(cursorStart, cursorEnd);
   });
   app.querySelectorAll("[data-search-result]").forEach((button) =>
     button.addEventListener("click", () => {
