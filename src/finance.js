@@ -10,7 +10,7 @@ export const FINANCIAL_COLLECTIONS = Object.freeze([
 ]);
 
 function transaction(sourceCollection, source, kind, field, options = {}) {
-  const amount = monetaryField(source, field, options.fallbackCurrency);
+  const amount = options.amount || monetaryField(source, field, options.fallbackCurrency);
   if (BigInt(amount.minorUnits) <= 0n) return null;
   return {
     key: `${sourceCollection}:${source.id}:${kind}`,
@@ -68,10 +68,7 @@ export function entityFinancialTransactions(collection, item, fallbackCurrency) 
     let paid = monetaryField(item, "paidAmount", fallbackCurrency);
     if (item.paymentStatus === "Pagado") paid = total;
     if (BigInt(paid.minorUnits) > 0n) {
-      rows.push({
-        ...transaction(collection, item, "paid", "paidAmount", { fallbackCurrency, category }),
-        amount: paid,
-      });
+      rows.push(transaction(collection, item, "paid", "paidAmount", { fallbackCurrency, category, amount: paid }));
     }
     if (total.currency === paid.currency && BigInt(total.minorUnits) > BigInt(paid.minorUnits)) {
       rows.push({

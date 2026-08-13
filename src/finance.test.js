@@ -1,5 +1,5 @@
 import { entityContractIssues } from "./contracts.js";
-import { canonicalBudgetSummary, projectFinancialTransactions } from "./finance.js";
+import { canonicalBudgetSummary, entityFinancialTransactions, projectFinancialTransactions } from "./finance.js";
 import { allocateMoney, convertMoney, createMoney, decimalToMinor, minorToDecimal } from "./money.js";
 
 function assertEquals(actual, expected) {
@@ -70,4 +70,29 @@ Deno.test("la proyección financiera incluye reservas y evita reinterpretar impo
   assertEquals(summary.spent, 40);
   assertEquals(summary.committed, 50);
   assertEquals(summary.remaining, 960);
+});
+
+Deno.test("proyecta alojamientos antiguos pagados aunque no tengan paidAmount", () => {
+  const transactions = entityFinancialTransactions("stays", {
+    id: "stay-legacy",
+    name: "Hotel",
+    price: 12500,
+    currency: "JPY",
+    paymentStatus: "Pagado",
+    checkInDate: "2026-09-17",
+  }, "JPY");
+
+  assertEquals(transactions, [{
+    key: "stays:stay-legacy:paid",
+    sourceCollection: "stays",
+    sourceId: "stay-legacy",
+    kind: "paid",
+    category: "Alojamiento",
+    state: "confirmed",
+    amount: { currency: "JPY", minorUnits: "12500", scale: 0 },
+    payerId: null,
+    occurredOn: "2026-09-17",
+    title: "Hotel",
+    exchange: null,
+  }]);
 });
