@@ -51,6 +51,14 @@ Deno.test("formatea fechas ISO con hora usadas por los miembros", () => {
   }
 });
 
+Deno.test("los hospedajes muestran total y precio por noche en las dos monedas", async () => {
+  const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  const stays = source.slice(source.indexOf("function renderStays()"), source.indexOf("function renderTransport()"));
+  if (!stays.includes("itemMoney(i.price, i)") || !stays.includes("itemMoney(Number(i.price || 0) / nights, i)")) {
+    throw new Error("El total y el precio por noche deben usar el formateador de doble moneda");
+  }
+});
+
 Deno.test("ofrece un catálogo amplio y buscable de emojis para los lugares", () => {
   const entries = EMOJI_GROUPS.flatMap((category) =>
     category.groups.flatMap(([keywords, emojis]) =>
@@ -231,6 +239,24 @@ Deno.test("Fase 2 integra zonas, calendario, trayectos, colaboración y tablas m
   }
   if (!api.includes('resource === "comments"') || !api.includes('resource === "route-estimates"')) {
     throw new Error("Faltan endpoints desacoplados de colaboración o rutas");
+  }
+});
+
+Deno.test("el modo móvil resiste zoom, teclado y navegación inferior", async () => {
+  const html = await Deno.readTextFile(new URL("../index.html", import.meta.url));
+  const css = await Deno.readTextFile(new URL("./styles.css", import.meta.url));
+  for (
+    const marker of [
+      "interactive-widget=resizes-content",
+      "--mobile-nav-height: 66px",
+      "(max-device-width: 800px)",
+      "scroll-padding-bottom: calc(var(--mobile-nav-height)",
+      "grid-template-columns: repeat(2, minmax(0, 1fr))",
+    ]
+  ) {
+    if (!html.includes(marker) && !css.includes(marker)) {
+      throw new Error(`Falta la protección responsive ${marker}`);
+    }
   }
 });
 

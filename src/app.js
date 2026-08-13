@@ -3919,7 +3919,7 @@ function renderStays() {
       } · ${esc(i.checkOutTime || "—")}</strong></div></div><div class="stay-summary"><strong>${nights} ${
         nights === 1 ? "noche" : "noches"
       }</strong><span>${itemMoney(i.price, i)}${
-        nights ? ` · ${primaryMoney(Number(i.price || 0) / nights, itemCurrency(i))} / noche` : ""
+        nights ? ` · ${itemMoney(Number(i.price || 0) / nights, i)} / noche` : ""
       }${
         i.paymentStatus === "Parcial" ? ` · ${primaryMoney(stayBudgetAmounts(i).paid, itemCurrency(i))} pagado` : ""
       }</span></div>${
