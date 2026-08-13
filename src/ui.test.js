@@ -88,7 +88,8 @@ Deno.test("el mapa muestra el detalle antes de la lista y permite limpiar la sel
 
 Deno.test("la interfaz integra notas, fotos y un asa de arrastre inequívoca", async () => {
   const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
-  if (!source.includes('["notes", "Notas", "note"]') || !source.includes("function renderNotes()")) {
+  const navigation = await Deno.readTextFile(new URL("./navigation.js", import.meta.url));
+  if (!navigation.includes('["notes", "Notas", "note"]') || !source.includes("function renderNotes()")) {
     throw new Error("Falta el apartado de notas");
   }
   if (!source.includes('type: "image"') || !source.includes('"photos"')) {
@@ -155,6 +156,7 @@ Deno.test("Presupuesto muestra trayectos y Google Places confirma la foto autom�
 
 Deno.test("Itinerario es exclusivamente diario y la navegación conserva el orden acordado", async () => {
   const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  const navigation = await Deno.readTextFile(new URL("./navigation.js", import.meta.url));
   if (source.includes("data-itinerary-view") || source.includes("itineraryView")) {
     throw new Error("Itinerario no debe conservar selectores ni estado semanal/general");
   }
@@ -175,8 +177,65 @@ Deno.test("Itinerario es exclusivamente diario y la navegación conserva el orde
   ];
   let previous = -1;
   for (const entry of expectedNavigation) {
-    const index = source.indexOf(entry);
+    const index = navigation.indexOf(entry);
     if (index <= previous) throw new Error(`La navegación está desordenada cerca de ${entry}`);
     previous = index;
+  }
+});
+
+Deno.test("la cuenta ofrece recuperación segura y cierre de otras sesiones", async () => {
+  const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (!source.includes("data-recover") || !source.includes('"/auth/recover"')) {
+    throw new Error("Falta el flujo de recuperación de cuenta");
+  }
+  if (!source.includes("data-recovery-codes") || !source.includes('"/auth/sessions/revoke-others"')) {
+    throw new Error("Faltan los controles de códigos y sesiones");
+  }
+});
+
+Deno.test("Fase 2 integra zonas, calendario, trayectos, colaboración y tablas móviles", async () => {
+  const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  const css = await Deno.readTextFile(new URL("./styles.css", import.meta.url));
+  const api = await Deno.readTextFile(new URL("../backend/api.js", import.meta.url));
+  for (
+    const marker of [
+      "timeZoneOptions",
+      "data-export-ics",
+      "data-calculate-routes",
+      "data-comments",
+      "data-add-reminder",
+    ]
+  ) {
+    if (!app.includes(marker)) throw new Error(`Falta la integración ${marker}`);
+  }
+  if (!css.includes("content: attr(data-label)") || !css.includes(".skip-link")) {
+    throw new Error("Las tablas móviles o el salto accesible no están integrados");
+  }
+  if (!api.includes('resource === "comments"') || !api.includes('resource === "route-estimates"')) {
+    throw new Error("Faltan endpoints desacoplados de colaboración o rutas");
+  }
+});
+
+Deno.test("Fase 3 ofrece dashboard contextual, plantillas y actualización PWA controlada", async () => {
+  const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  const sw = await Deno.readTextFile(new URL("../sw.js", import.meta.url));
+  const manifest = JSON.parse(await Deno.readTextFile(new URL("../manifest.webmanifest", import.meta.url)));
+  for (
+    const marker of [
+      "TRIP_PHASES.BEFORE",
+      "TRIP_PHASES.DURING",
+      "TRIP_PHASES.AFTER",
+      "duplicateTripDialog",
+      "data-save-template",
+      "data-refresh-pwa",
+    ]
+  ) {
+    if (!app.includes(marker)) throw new Error(`Falta ${marker}`);
+  }
+  if (!sw.includes("SKIP_WAITING") || sw.includes("cache.addAll(ASSETS)).then(() => self.skipWaiting())")) {
+    throw new Error("Las actualizaciones PWA deben requerir confirmación");
+  }
+  if (!Array.isArray(manifest.shortcuts) || manifest.shortcuts.length < 3) {
+    throw new Error("El manifiesto no ofrece suficientes accesos rápidos");
   }
 });

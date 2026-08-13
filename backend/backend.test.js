@@ -12,7 +12,7 @@ const { getExchangeRate } = await import("./exchange-rates.js");
 
 await db.exec(`
   TRUNCATE TABLE
-    exchange_rates, notes, inspirations, reservations, transports, stays, funds, expenses, purchases, tasks, places,
+    route_estimates, entity_comments, exchange_rates, reminders, notes, inspirations, reservations, transports, stays, funds, expenses, purchases, tasks, places,
     activities, trip_activity_logs, trip_invitations, trip_members, sessions, trips, users
   CASCADE
 `);
@@ -118,6 +118,15 @@ Deno.test({
       "https://evil.example",
     );
     assertEquals(rejectedOrigin.status, 403, "Debe rechazar mutaciones desde un origen público distinto");
+
+    const weakRegistration = await call("POST", "/api/auth/register", {
+      name: "Débil",
+      username: "debil",
+      email: "debil@example.com",
+      password: "abc123",
+    });
+    assertEquals(weakRegistration.status, 422);
+    assertEquals(weakRegistration.data.error.code, "WEAK_PASSWORD");
 
     const owner = await call("POST", "/api/auth/register", {
       name: "Hortensi",
@@ -293,13 +302,34 @@ Deno.test({
       name: "Alex",
       username: "alex",
       email: "alex@example.com",
-      password: "abc123",
+      password: "abc123-secure",
     });
-    const usernameLogin = await call("POST", "/api/auth/login", { identifier: "alex", password: "abc123" });
+    const usernameLogin = await call("POST", "/api/auth/login", { identifier: "alex", password: "abc123-secure" });
     assertEquals(usernameLogin.status, 200, "Debe ser posible iniciar sesión mediante el nombre de usuario");
     const accepted = await call("POST", `/api/invite/${token}/accept`, {}, alex.cookie);
     assertEquals(accepted.status, 200);
     assertEquals(accepted.data.tripId, tripId);
+    const comment = await call("POST", `/api/trips/${tripId}/comments`, {
+      entityCollection: "places",
+      entityId: place.data.item.id,
+      body: "@alex revisa el horario",
+    }, owner.cookie);
+    assertEquals(comment.status, 201);
+    assertEquals(comment.data.comment.mentions[0], alex.data.user.id);
+    const comments = await call(
+      "GET",
+      `/api/trips/${tripId}/comments?collection=places&entityId=${place.data.item.id}`,
+      null,
+      alex.cookie,
+    );
+    assertEquals(comments.status, 200);
+    assertEquals(comments.data.comments.length, 1);
+    const viewerComment = await call("POST", `/api/trips/${tripId}/comments`, {
+      entityCollection: "places",
+      entityId: place.data.item.id,
+      body: "No permitido",
+    }, alex.cookie);
+    assertEquals(viewerComment.status, 403);
     const duplicateUse = await call("POST", `/api/invite/${token}/accept`, {}, alex.cookie);
     assertEquals(duplicateUse.status, 410);
     const viewerWrite = await call("POST", `/api/trips/${tripId}/activities`, { title: "No permitido" }, alex.cookie);
@@ -311,6 +341,57 @@ Deno.test({
       owner.cookie,
     );
     assertEquals(roleChange.status, 200);
+    const sharedExpense = await call("POST", `/api/trips/${tripId}/expenses`, {
+      title: "Cena compartida",
+      currency: "JPY",
+      actualAmount: 1001,
+      paymentStatus: "Pagado",
+      paidByUserId: owner.data.user.id,
+      splits: [{ memberUserId: owner.data.user.id }, { memberUserId: alex.data.user.id }],
+    }, owner.cookie);
+    assertEquals(sharedExpense.status, 201);
+    assertEquals(sharedExpense.data.item.money.actualAmount.minorUnits, "1001");
+    assertEquals(sharedExpense.data.expenseSplits.length, 2);
+    assertEquals(sharedExpense.data.settlementTransfers.length, 1);
+    assertEquals(
+      sharedExpense.data.expenseSplits.reduce((sum, split) => sum + Number(split.amount.minorUnits), 0),
+      1001,
+    );
+    const reservationCost = await call("POST", `/api/trips/${tripId}/reservations`, {
+      title: "TeamLab",
+      type: "Actividad",
+      date: "2026-09-22",
+      currency: "JPY",
+      price: 5000,
+      paidAmount: 1000,
+      paymentStatus: "Parcial",
+      status: "Confirmada",
+    }, owner.cookie);
+    assertEquals(reservationCost.status, 201);
+    assert(
+      reservationCost.data.financialTransactions.some((entry) =>
+        entry.sourceId === reservationCost.data.item.id && entry.kind === "committed" &&
+        entry.amount.minorUnits === "4000"
+      ),
+      "Las reservas deben participar en la proyección financiera",
+    );
+    const purchasePhoto = await call("POST", `/api/trips/${tripId}/purchases`, {
+      product: "Amuleto",
+      currency: "JPY",
+      actualPrice: 700,
+      photo:
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    }, owner.cookie);
+    assertEquals(purchasePhoto.status, 201);
+    assertEquals(purchasePhoto.data.item.photo.startsWith("/api/media/"), true);
+    assertEquals(purchasePhoto.data.item.photo.includes("base64"), false);
+    const mediaRequest = new Request(`http://local${purchasePhoto.data.item.photo}`, {
+      headers: { cookie: owner.cookie, origin: "https://tabi.example" },
+    });
+    const media = await api(mediaRequest, new URL(mediaRequest.url).pathname);
+    assertEquals(media.status, 200);
+    assertEquals(media.headers.get("content-type"), "image/png");
+    assert((await media.arrayBuffer()).byteLength > 60);
     const editorWrite = await call("POST", `/api/trips/${tripId}/activities`, {
       title: "Plan compartido",
       date: "2026-09-18",
@@ -357,7 +438,7 @@ Deno.test({
     const archiveResponse = await call("GET", `/api/trips/${tripId}/archive`, null, owner.cookie);
     assertEquals(archiveResponse.status, 200);
     assertEquals(archiveResponse.data.format, "tabi-trip");
-    assertEquals(archiveResponse.data.schemaVersion, 1);
+    assertEquals(archiveResponse.data.schemaVersion, 3);
     assertEquals(archiveResponse.data.collections.places[0].id, place.data.item.id);
     assertEquals(archiveResponse.data.collections.notes[0].title, "Recordatorio");
     assertEquals(archiveResponse.data.collections.places[0].version, undefined);
@@ -384,12 +465,30 @@ Deno.test({
     assertEquals(afterArchive.data.places[0].description, "Cambio externo");
     assertEquals(afterArchive.data.tasks[0].title, "Preparar maletas");
     assertEquals(afterArchive.data.notes[0].content, "Llevar efectivo");
+    assertEquals(afterArchive.data.purchases[0].photo.startsWith("/api/media/"), true);
+    assert(
+      afterArchive.data.financialTransactions.some((entry) => entry.sourceCollection === "reservations"),
+      "La importación debe reconstruir la proyección financiera",
+    );
     assertEquals(afterArchive.data.activities[0].title, "Plan compartido");
     assertEquals(afterArchive.data.activities[0].placeId, place.data.item.id);
     assertEquals(
       afterArchive.data.activities.find(({ title }) => title === "Visitar Kinkaku-ji").placeId,
       "place_new_1",
     );
+    const template = await call("POST", `/api/trips/${tripId}/duplicate`, {
+      name: "Japón reutilizable",
+      startDate: "2027-09-17",
+      asTemplate: true,
+      resetProgress: true,
+      collections: ["activities", "places", "tasks", "notes"],
+    }, owner.cookie);
+    assertEquals(template.status, 201);
+    const templateBootstrap = await call("GET", `/api/trips/${template.data.tripId}/bootstrap`, null, owner.cookie);
+    assertEquals(templateBootstrap.data.trip.isTemplate, true);
+    assertEquals(templateBootstrap.data.trip.startDate, "2027-09-17");
+    assertEquals(templateBootstrap.data.activities[0].date.startsWith("2027"), true);
+    assertEquals(templateBootstrap.data.purchases.length, 0);
 
     const outsider = await call("POST", "/api/auth/register", {
       name: "Laura",
@@ -460,5 +559,50 @@ Deno.test({
     assertEquals(logs.status, 200);
     assertEquals(logs.data.funds[0].amount, 100000);
     assert(logs.data.logs.some((entry) => entry.action === "entity.updated"));
+    assert(logs.data.financialTransactions.length > 0);
+    assert(logs.data.settlementBalances.some((balance) => balance.memberUserId === owner.data.user.id));
+
+    const sessions = await call("GET", "/api/auth/sessions", null, owner.cookie);
+    assertEquals(sessions.status, 200);
+    assert(sessions.data.sessions.some((entry) => entry.current));
+    const revokeOthers = await call("POST", "/api/auth/sessions/revoke-others", {}, owner.cookie);
+    assertEquals(revokeOthers.status, 200);
+
+    const recoveryUser = await call("POST", "/api/auth/register", {
+      name: "Recuperación",
+      username: "recovery",
+      email: "recovery@example.com",
+      password: "initial-secure-password",
+    });
+    assertEquals(recoveryUser.status, 201);
+    const recoveryCodes = await call("POST", "/api/auth/recovery-codes", {}, recoveryUser.cookie);
+    assertEquals(recoveryCodes.status, 201);
+    assertEquals(recoveryCodes.data.codes.length, 8);
+    const storedRecovery = await db.prepare("SELECT code_hash FROM account_recovery_codes WHERE user_id=? LIMIT 1").get(
+      recoveryUser.data.user.id,
+    );
+    assert(
+      !recoveryCodes.data.codes.includes(storedRecovery.code_hash),
+      "Los códigos deben persistirse únicamente como hash",
+    );
+    const recovered = await call("POST", "/api/auth/recover", {
+      identifier: "recovery",
+      recoveryCode: recoveryCodes.data.codes[0],
+      newPassword: "new-secure-password",
+    });
+    assertEquals(recovered.status, 200);
+    assertEquals(
+      (await call("POST", "/api/auth/recover", {
+        identifier: "recovery",
+        recoveryCode: recoveryCodes.data.codes[0],
+        newPassword: "another-secure-password",
+      })).status,
+      422,
+    );
+    assertEquals((await call("GET", "/api/me", null, recoveryUser.cookie)).status, 401);
+    assertEquals(
+      (await call("POST", "/api/auth/login", { identifier: "recovery", password: "new-secure-password" })).status,
+      200,
+    );
   },
 });

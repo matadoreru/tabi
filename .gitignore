@@ -1,5 +1,6 @@
 data/
 .env
+backups/
 .env.*
 !.env.example
 *.sqlite

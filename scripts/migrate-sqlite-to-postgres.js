@@ -1,6 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { closeDatabase, db, transaction } from "../backend/database.js";
 import { ENTITY_TABLES } from "../backend/config.js";
+import { extractMediaAssets } from "../backend/media.js";
+import { syncFinancialSource } from "../backend/finance.js";
+import { attachExactMoney } from "../src/money.js";
+import { ENTITY_CONTRACTS } from "../src/contracts.js";
 
 const sourcePath = Deno.args[0] || Deno.env.get("TABI_SQLITE_SOURCE") || "/app/data/tabi.sqlite";
 const JSON_COLUMNS = new Set(["data", "metadata"]);
@@ -91,6 +95,10 @@ try {
     source.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(({ name }) => name),
   );
   const counts = {};
+  const entityCollections = new Map(Object.entries(ENTITY_TABLES).map(([collection, table]) => [table, collection]));
+  const tripCurrencies = new Map(
+    source.prepare("SELECT id,currency FROM trips").all().map((row) => [row.id, row.currency]),
+  );
 
   await transaction(async () => {
     for (const [table, columns] of tables) {
@@ -103,11 +111,28 @@ try {
       const placeholders = columns.map(() => "?").join(",");
       const insert = db.prepare(`INSERT INTO ${table}(${columns.join(",")}) VALUES (${placeholders})`);
       for (const row of rows) {
-        await insert.run(...columns.map((column) => migrationValue(table, column, row[column], row)));
+        const values = Object.fromEntries(
+          columns.map((column) => [column, migrationValue(table, column, row[column], row)]),
+        );
+        const collection = entityCollections.get(table);
+        if (collection) {
+          attachExactMoney(values.data, ENTITY_CONTRACTS[collection]?.money || [], tripCurrencies.get(row.trip_id));
+          await extractMediaAssets(row.trip_id, collection, row.id, values.data, row.updated_by);
+        }
+        await insert.run(...columns.map((column) => values[column]));
+        if (collection) {
+          await syncFinancialSource(
+            row.trip_id,
+            collection,
+            { ...values.data, id: row.id },
+            tripCurrencies.get(row.trip_id),
+            row.updated_at,
+          );
+        }
       }
     }
 
-    for (const [table] of tables) {
+    for (const [table, columns] of tables) {
       const destination = Number((await db.prepare(`SELECT COUNT(*)::integer count FROM ${table}`).get()).count);
       if (destination !== counts[table]) {
         throw new Error(`Verificación fallida en ${table}: SQLite=${counts[table]}, PostgreSQL=${destination}.`);

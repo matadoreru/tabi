@@ -58,7 +58,10 @@ export function validateMutationOrigin(request) {
 
 export function handleError(error) {
   if (error instanceof HttpError) {
-    return json({ error: { code: error.code, message: error.message, details: error.details } }, error.status);
+    const headers = error.status === 429 && error.details?.retryAfterSeconds
+      ? { "retry-after": String(error.details.retryAfterSeconds) }
+      : {};
+    return json({ error: { code: error.code, message: error.message, details: error.details } }, error.status, headers);
   }
   if (error?.constraint_name === "idx_users_email_unique" || error?.constraint === "idx_users_email_unique") {
     return json({ error: { code: "EMAIL_TAKEN", message: "Ya existe una cuenta con ese email." } }, 409);

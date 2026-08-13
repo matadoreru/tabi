@@ -1,5 +1,6 @@
 import { api } from "./backend/api.js";
 import { handleError, HttpError } from "./backend/http.js";
+import { recordRequest } from "./backend/metrics.js";
 
 const root = new URL("./", import.meta.url);
 const port = Number(Deno.env.get("PORT") || 4173);
@@ -14,13 +15,55 @@ const types = {
 
 Deno.serve({ port }, async (request) => {
   const url = new URL(request.url);
+  const startedAt = performance.now();
+  const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
+  let response;
   try {
-    if (url.pathname.startsWith("/api/")) return await api(request, url.pathname);
-    return await staticFile(request, url.pathname);
+    response = url.pathname.startsWith("/api/")
+      ? await api(request, url.pathname)
+      : await staticFile(request, url.pathname);
   } catch (error) {
-    return handleError(error);
+    response = handleError(error);
+    console.error(
+      JSON.stringify({
+        level: "error",
+        requestId,
+        method: request.method,
+        path: url.pathname,
+        status: response.status,
+        code: error?.code || "INTERNAL_ERROR",
+        message: error?.message || "Error interno",
+      }),
+    );
   }
+  const durationMs = performance.now() - startedAt;
+  recordRequest(request.method, url.pathname, response.status, durationMs);
+  if (url.pathname.startsWith("/api/")) {
+    console.log(
+      JSON.stringify({
+        level: "info",
+        requestId,
+        method: request.method,
+        path: url.pathname,
+        status: response.status,
+        durationMs: Math.round(durationMs),
+      }),
+    );
+  }
+  response.headers.set("x-request-id", requestId);
+  return securityHeaders(response, request);
 });
+
+function securityHeaders(response, request) {
+  const headers = new Headers(response.headers);
+  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(self)");
+  headers.set("x-frame-options", "DENY");
+  headers.set("cross-origin-opener-policy", "same-origin");
+  if (new URL(request.url).protocol === "https:" || Deno.env.get("TABI_PUBLIC_ORIGIN")?.startsWith("https://")) {
+    headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 
 async function staticFile(request, pathname) {
   if (!["GET", "HEAD"].includes(request.method)) throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");

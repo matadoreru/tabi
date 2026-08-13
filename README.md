@@ -1,176 +1,217 @@
-# Actualizar Docker
+<div align="center">
+  <img src="./assets/icon.svg" alt="Tabi" width="96" height="96">
+
+# Tabi
+
+**Organiza todo tu viaje en un único lugar.**
+
+Itinerario, mapa, reservas, presupuesto y colaboración en tiempo real.
+
+[![Deno](https://img.shields.io/badge/Deno-2.9+-111111?logo=deno&logoColor=white)](https://deno.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![PWA](https://img.shields.io/badge/PWA-offline-5A0FC8?logo=pwa&logoColor=white)](./manifest.webmanifest)
+
+[Características](#-qué-puedes-hacer) · [Inicio rápido](#-inicio-rápido) · [Docker](#-docker) ·
+[Documentación](#-documentación)
+
+</div>
+
+---
+
+## ✨ Qué puedes hacer
+
+|    | Función            | Descripción                                                               |
+| -- | ------------------ | ------------------------------------------------------------------------- |
+| 🗓️ | **Itinerario**     | Planifica cada día, detecta solapamientos y calcula desplazamientos.      |
+| 🗺️ | **Mapa y lugares** | Guarda lugares de Google Places con ubicación, datos e imagen automática. |
+| 🎫 | **Reservas**       | Relaciona reservas con actividades, alojamientos y transportes.           |
+| 💰 | **Presupuesto**    | Controla gastos, fondos y liquidaciones en dos monedas.                   |
+| 👥 | **Colaboración**   | Invita viajeros, asigna permisos y recibe cambios en tiempo real.         |
+| ✅ | **TODO**           | Gestiona una lista común con responsables, prioridad y fecha límite.      |
+| 📴 | **Modo offline**   | Consulta el último viaje y crea elementos aunque pierdas la conexión.     |
+| 📱 | **PWA**            | Instala Tabi en móvil u ordenador como una aplicación.                    |
+
+También incluye compras con fotografías, hospedaje, transporte, notas, inspiración, calendario ICS, recordatorios,
+plantillas y duplicación inteligente de viajes.
+
+## 🚀 Inicio rápido
+
+### Requisitos
+
+- [Deno 2.9 o posterior](https://docs.deno.com/runtime/getting_started/installation/)
+- PostgreSQL accesible
+- Variables `TABI_POSTGRES_*` configuradas; consulta [.env.example](./.env.example)
+
+### Ejecutar en local
 
 ```bash
-docker compose pull
-docker compose up -d
+git clone https://github.com/matadoreru/tabi.git
+cd tabi
+cp .env.example .env
+```
+
+Completa, como mínimo, la contraseña de PostgreSQL y arranca la aplicación cargando ese archivo:
+
+```bash
+deno task --env-file=.env dev
+```
+
+Abre [http://localhost:4173](http://localhost:4173). La primera ejecución crea las tablas y aplica las migraciones
+pendientes automáticamente.
+
+> [!TIP]
+> Para una instalación completa con PostgreSQL en Docker, copias de seguridad y HTTPS, sigue [DEPLOY.md](./DEPLOY.md).
+
+## 🐳 Docker
+
+### Primera instalación
+
+La configuración de producción, migración desde SQLite y recuperación de copias está explicada paso a paso en
+[DEPLOY.md](./DEPLOY.md).
+
+### Actualizar una instalación existente
+
+```bash
+docker compose pull app
+docker compose up -d --wait app
 docker compose ps
 ```
 
-# Tabi · planificador colaborativo de viajes
-
-Aplicación web multiusuario para organizar itinerarios, lugares, tareas, compras, presupuesto, alojamientos, transporte
-y reservas. Mantiene la interfaz PWA original, pero los datos compartidos se almacenan en PostgreSQL detrás de una API
-autenticada.
-
-Las tareas se gestionan como una sola lista TODO, con responsable, prioridad, fecha límite, estado e información libre.
-La moneda principal, secundaria y el tipo de cambio pertenecen al viaje, por lo que todos los miembros ven los mismos
-totales.
-
-## Monedas y tipos de cambio
-
-`src/currency.js` centraliza las monedas admitidas, precisión, formato y conversiones. Cada movimiento conserva su
-importe y moneda originales; cambiar la moneda principal solo modifica cómo se calculan y presentan los resúmenes. Al
-guardar un importe, la API añade una instantánea del cambio utilizado como referencia histórica y respaldo.
-
-El modo automático consulta Frankfurter exclusivamente desde el backend, guarda el resultado en PostgreSQL durante 12
-horas y reutiliza el último valor conocido si el proveedor no responde. No requiere ni expone claves. El modo manual
-conserva un cambio compartido entre la moneda principal y secundaria. Los tipos automáticos son valores de referencia
-diarios, no cotizaciones para operaciones financieras.
-
-## Ejecutar
-
-Requiere Deno 2.9 o posterior y un PostgreSQL accesible. Deno descarga el driver declarado en `deno.json`.
+Comprueba después que la API responde y revisa los últimos mensajes:
 
 ```bash
-deno task dev
+curl --fail --silent http://127.0.0.1:4173/api/health
+docker compose logs --tail=100 app postgres
 ```
 
-PostgreSQL debe estar disponible con las variables `TABI_POSTGRES_*`. La primera ejecución crea las tablas y aplica
-automáticamente las migraciones pendientes. La configuración Docker y el traslado desde SQLite están en
-[DEPLOY.md](./DEPLOY.md).
+> [!IMPORTANT]
+> No vuelvas a ejecutar `migrate:sqlite` después del traslado inicial y no uses `docker compose down -v`: eliminaría los
+> volúmenes de datos. Haz una copia de PostgreSQL antes de cada actualización importante.
+
+## 🧪 Desarrollo y pruebas
 
 ```bash
+# Formato
+deno fmt --check
+
+# Lint
+deno lint
+
+# Comprobación de tipos
+deno check src/app.js
+deno check server.js
+
+# Suite completa (requiere PostgreSQL de pruebas)
 deno task test
 ```
 
-Para producción:
+El backend necesita las variables `TABI_POSTGRES_*` también durante sus pruebas de integración.
 
-```bash
-PORT=8000 TABI_SECURE_COOKIE=true TABI_POSTGRES_HOST=127.0.0.1 TABI_POSTGRES_PASSWORD=... deno task dev
-```
-
-Debe desplegarse detrás de HTTPS y con copias periódicas mediante `pg_dump`.
-
-Para el despliegue automatizado con Docker, GHCR, Watchtower y Cloudflare Tunnel, consulta [DEPLOY.md](./DEPLOY.md).
-
-## Arquitectura
+## 🧭 Cómo está organizado
 
 ```text
-server.js                     servidor HTTP, estáticos y cabeceras de seguridad
-backend/
-  api.js                      API, transacciones, auditoría y validación
-  auth.js                     registro, login, sesión y contraseñas
-  authorization.js            membresía y protección anti-IDOR
-  crypto.js                   PBKDF2, tokens y hashing SHA-256
-  database.js                 pool, esquema PostgreSQL y migraciones incrementales
-  events.js                   sincronización Server-Sent Events
-  exchange-rates.js           proveedor desacoplado y caché de tipos de cambio
-  http.js                     errores tipados, cookies y protección de origen
-src/
-  api-client.js               cliente HTTP y errores de API
-  session.js                  currentUser/currentTrip/membership/permissions
-  store.js                    repositorio remoto y suscripción en tiempo real
-  currency.js                 catálogo, formato y conversión central de monedas
-  visuals.js                  iconos y colores compartidos de estados
-  permissions.js              capabilities y mapa central de roles
-  app.js                      router, controladores y composición de vistas
-  ui.js                       componentes HTML, modal y feedback
-  domain.js                   reglas puras de horarios, presupuesto y distancia
-  data.js                     catálogos y datos de la versión local anterior
+Tabi
+├── backend/          API, autenticación, PostgreSQL y servicios
+├── src/              dominio, estado, componentes y aplicación web
+├── scripts/          migración, despliegue y copias de seguridad
+├── server.js         servidor HTTP y archivos estáticos
+├── sw.js             service worker y funcionamiento offline
+├── compose.yml       aplicación y PostgreSQL en Docker
+└── DEPLOY.md         guía de instalación y operación
 ```
 
-La capa de sesión ofrece el equivalente al contexto solicitado:
+El proyecto separa las reglas de negocio, los servicios y la persistencia. El frontend adapta las acciones al rol del
+usuario, pero todas las operaciones vuelven a validarse y autorizarse en el servidor.
 
-```js
-session.currentUser;
-session.currentTrip;
-session.currentMembership;
-session.currentPermissions;
-session.can(PERMISSIONS.TRIP_EDIT);
-```
+<details>
+<summary><strong>Ver módulos principales</strong></summary>
 
-El frontend usa estos datos para adaptar la interfaz, pero el servidor vuelve a autorizar cada operación.
+### Backend
 
-## Datos y migraciones
+| Módulo                      | Responsabilidad                                       |
+| --------------------------- | ----------------------------------------------------- |
+| `backend/api.js`            | Rutas de viaje, transacciones y validación.           |
+| `backend/database.js`       | Pool, esquema PostgreSQL y migraciones incrementales. |
+| `backend/auth.js`           | Registro, login, sesiones y contraseñas.              |
+| `backend/authorization.js`  | Membresía, capacidades y protección anti-IDOR.        |
+| `backend/finance.js`        | Proyección financiera, repartos y liquidaciones.      |
+| `backend/media.js`          | Almacenamiento autenticado de imágenes.               |
+| `backend/events.js`         | Sincronización mediante Server-Sent Events.           |
+| `backend/exchange-rates.js` | Proveedor y caché de tipos de cambio.                 |
 
-El esquema contiene:
+### Frontend y dominio
 
-- `users`: nombre de usuario y email únicos, hash, sal y algoritmo de contraseña.
-- `sessions`: tokens opacos almacenados como SHA-256, expiración e índice por usuario.
-- `trips`: datos generales, auditoría y versión optimista.
-- `trip_members`: clave primaria compuesta `(trip_id, user_id)` y un único owner por viaje.
-- `trip_invitations`: token hasheado, rol, creador, expiración, límite de usos, revocación y versión.
-- `trip_activity_logs`: evento y metadata estructurada, indexado por viaje y fecha.
-- Una tabla por entidad existente, siempre con FK `trip_id`, `version`, `created_at`, `updated_at`, `created_by` y
-  `updated_by`.
+| Módulo                 | Responsabilidad                                 |
+| ---------------------- | ----------------------------------------------- |
+| `src/app.js`           | Router, controladores y composición de vistas.  |
+| `src/store.js`         | Repositorio remoto y sincronización.            |
+| `src/contracts.js`     | Contratos compartidos y validación estructural. |
+| `src/money.js`         | Aritmética monetaria decimal exacta.            |
+| `src/finance.js`       | Reglas financieras puras.                       |
+| `src/time.js`          | Zonas horarias e instantes UTC.                 |
+| `src/offline-cache.js` | Caché local y operaciones pendientes.           |
+| `src/permissions.js`   | Capacidades y roles centralizados.              |
 
-Las eliminaciones de un viaje propagan únicamente a sus datos, miembros, invitaciones e historial. El borrado de un
-usuario elimina sus sesiones y membresías; en auditoría y entidades el autor se conserva como referencia anulable.
+</details>
 
-La antigua información de `localStorage` no se elimina. Al crear el primer viaje, la UI detecta `tabi-data-v1` y permite
-importarla mediante una transacción autenticada.
+## 🗃️ Datos, dinero y compatibilidad
 
-### Proyectos editables (`.tabi-trip.json`)
+- PostgreSQL es la fuente de verdad y permite edición concurrente.
+- Los importes se conservan en su moneda original y como unidades menores exactas.
+- Cambiar la moneda principal modifica la presentación, no sobrescribe el histórico.
+- El modo automático de cambio usa Frankfurter desde el backend y mantiene el último valor conocido.
+- Las fotografías se guardan en `media_assets`, fuera del JSON de las entidades.
+- La importación de proyectos `.tabi-trip.json` acepta versiones anteriores y se realiza en una transacción.
+- Los datos antiguos de `localStorage` pueden importarse al crear el primer viaje.
 
-Desde Configuración se puede exportar una copia completa del contenido del viaje en JSON e importarla de nuevo después
-de editarla o procesarla con ChatGPT. El archivo incluye los datos generales y todas las colecciones, conserva los IDs
-que enlazan actividades con lugares, alojamientos y transportes, y contiene una guía breve para su edición. Las fotos
-optimizadas de productos, las referencias de fotos de Google Places y las notas ordenables también forman parte del
-archivo.
+El formato portable actual es `schemaVersion: 3`. Las imágenes solo se convierten a base64 dentro del archivo de
+exportación; al importarlas vuelven al almacenamiento de medios.
 
-La importación valida primero el archivo y después sustituye el contenido en una sola transacción: un error no deja el
-viaje a medias. Las cuentas, membresías, permisos, invitaciones, sesiones y el historial de auditoría no son portables y
-permanecen intactos en el viaje de destino.
+<details>
+<summary><strong>Ver modelo de datos resumido</strong></summary>
 
-## Autenticación y seguridad
+- `users`, `sessions` y `account_recovery_codes`: identidad y acceso.
+- `trips`, `trip_members` y `trip_invitations`: viajes y colaboración.
+- `trip_activity_logs`: historial auditable.
+- Tablas independientes para actividades, lugares, tareas, compras, reservas, alojamientos y transportes.
+- `financial_transactions` y `expense_splits`: movimientos canónicos y reparto exacto.
+- `media_assets`: contenido binario autorizado por viaje.
 
-- Login mediante usuario o email. Contraseñas derivadas con PBKDF2-SHA-256, 310.000 iteraciones y sal aleatoria
-  individual.
-- Sesión de 256 bits en cookie `HttpOnly`, `SameSite=Lax`; `Secure` se activa con `TABI_SECURE_COOKIE=true`.
-- En la base solo se conserva SHA-256 del token de sesión y del token de invitación.
-- Validación de tamaño y formato tanto en formularios como en la API.
-- Comprobación de `Origin`/`Sec-Fetch-Site` y API exclusivamente JSON para mutaciones.
-- CSP, `nosniff`, política de referrer y prohibición de embedding.
-- Consultas de recursos siempre acotadas por `id AND trip_id`, después de comprobar la membresía.
-- Los usuarios sin acceso reciben `404` para no revelar la existencia del viaje.
+Todas las entidades editables utilizan versión optimista, auditoría y claves foráneas al viaje.
 
-### Autorización
+</details>
 
-Los roles no se comprueban de manera dispersa. `src/permissions.js` define capabilities como `TRIP_EDIT`,
-`MEMBER_INVITE` o `BUDGET_EDIT`, junto con el mapa único `ROLE_PERMISSIONS`. `authorize()` resuelve membresía y
-capability antes de cualquier acceso.
+## 🔐 Seguridad y colaboración
 
-- Owner: todas las capabilities.
-- Editor: lectura, edición de contenido, presupuesto y duplicado.
-- Viewer: solo lectura.
+- Cookies de sesión `HttpOnly`, `SameSite=Lax` y `Secure` en producción.
+- PBKDF2-SHA-256 con sal individual para las contraseñas.
+- Tokens de sesión e invitación almacenados únicamente como hash.
+- Protección de origen, CSP, límites de tamaño y rate limiting.
+- Autorización por capacidades: **Owner**, **Editor** y **Viewer**.
+- Consultas siempre limitadas al viaje para evitar acceso indirecto a recursos.
+- Control de concurrencia con versiones y respuesta `409 VERSION_CONFLICT`.
+- Actualización incremental entre usuarios mediante Server-Sent Events.
+- Códigos opcionales de recuperación de cuenta, de un solo uso.
 
-Cambiar roles, expulsar miembros y transferir propiedad se realiza mediante operaciones específicas y transacciones. El
-owner no se puede expulsar ni degradar directamente.
+Para producción, usa siempre HTTPS, una contraseña PostgreSQL robusta y copias periódicas mediante `pg_dump`.
 
-## Invitaciones
+## 📚 Documentación
 
-El servidor genera tokens aleatorios de 256 bits. El token completo se devuelve una sola vez y se guarda únicamente en
-el navegador que creó el enlace para poder copiarlo posteriormente; PostgreSQL conserva solo su hash. La aceptación
-valida y consume el uso dentro de una transacción con versión, evitando carreras entre dos aceptaciones simultáneas.
+| Documento                                      | Contenido                                                                          |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [DEPLOY.md](./DEPLOY.md)                       | Instalación en mini-PC, Docker, PostgreSQL, backups, actualización y recuperación. |
+| [.env.example](./.env.example)                 | Variables de entorno disponibles.                                                  |
+| [compose.yml](./compose.yml)                   | Servicios y volúmenes utilizados en Docker.                                        |
+| [manifest.webmanifest](./manifest.webmanifest) | Instalación y accesos directos de la PWA.                                          |
 
-La ruta `/invite/:token` funciona con o sin sesión. El token permanece en la URL durante registro/login, y se consume
-únicamente al pulsar “Unirme al viaje”.
+## 🛣️ Escalado futuro
 
-## Concurrencia y sincronización
+La instalación actual funciona con una instancia de aplicación y PostgreSQL. Para ejecutar varias réplicas, los eventos
+SSE deberán coordinarse con PostgreSQL `LISTEN/NOTIFY`, Redis u otro bus compartido.
 
-Todas las entidades editables tienen `version`. Un `PATCH` debe incluir la versión leída; el
-`UPDATE ... WHERE version = ?` detecta escrituras obsoletas y responde `409 VERSION_CONFLICT`. La UI recarga la versión
-del servidor y explica el conflicto en lugar de sobrescribir silenciosamente.
+---
 
-Cada mutación publica un evento SSE en `/api/trips/:tripId/events`. Los demás clientes autenticados recargan el agregado
-y muestran quién hizo el cambio. El historial persistente utiliza acciones estables y metadata JSON, no frases rígidas.
-
-## Pruebas
-
-La suite comprueba reglas de presupuesto y horarios, hashing de contraseñas, tokens de invitación hasheados, consumo
-máximo, permisos Viewer, aislamiento de viajes/IDOR, auditoría y conflictos de versión.
-
-## Siguiente evolución
-
-PostgreSQL permite escrituras concurrentes y separar la persistencia del contenedor de aplicación. Para varias réplicas,
-SSE debería respaldarse con Redis, PostgreSQL `LISTEN/NOTIFY` u otro bus compartido.
+<div align="center">
+  Hecho para que organizar el viaje también forme parte del viaje. ✈️
+</div>

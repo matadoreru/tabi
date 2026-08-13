@@ -3,6 +3,7 @@
 .agents
 .codex
 data
+backups
 .env
 .env.*
 !.env.example

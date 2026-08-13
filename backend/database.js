@@ -209,6 +209,166 @@ const migrations = [
   SET metadata = (metadata #>> '{}')::jsonb
   WHERE jsonb_typeof(metadata) = 'string';
   `,
+  `
+  CREATE TABLE IF NOT EXISTS financial_transactions(
+    id TEXT PRIMARY KEY,
+    trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    source_collection TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('planned','committed','paid','refund','fund')),
+    category TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'confirmed',
+    amount_minor NUMERIC(30, 0) NOT NULL CHECK(amount_minor >= 0),
+    currency TEXT NOT NULL CHECK(char_length(currency) = 3),
+    payer_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    occurred_on DATE,
+    title TEXT NOT NULL DEFAULT '',
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE(trip_id, source_collection, source_id, kind)
+  );
+  CREATE INDEX IF NOT EXISTS idx_financial_transactions_trip
+    ON financial_transactions(trip_id, occurred_on, category);
+  CREATE INDEX IF NOT EXISTS idx_financial_transactions_source
+    ON financial_transactions(trip_id, source_collection, source_id);
+
+  CREATE TABLE IF NOT EXISTS expense_splits(
+    id TEXT PRIMARY KEY,
+    trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    source_collection TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    member_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    participant_name TEXT NOT NULL DEFAULT '',
+    amount_minor NUMERIC(30, 0) NOT NULL CHECK(amount_minor >= 0),
+    currency TEXT NOT NULL CHECK(char_length(currency) = 3),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    CHECK(member_user_id IS NOT NULL OR participant_name <> '')
+  );
+  CREATE INDEX IF NOT EXISTS idx_expense_splits_trip ON expense_splits(trip_id, member_user_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_splits_member_unique
+    ON expense_splits(trip_id, source_collection, source_id, member_user_id)
+    WHERE member_user_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS financial_projection_state(
+    trip_id TEXT PRIMARY KEY REFERENCES trips(id) ON DELETE CASCADE,
+    projection_version INTEGER NOT NULL DEFAULT 1,
+    projected_at TIMESTAMPTZ NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS media_assets(
+    id TEXT PRIMARY KEY,
+    trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    owner_collection TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg','image/png','image/webp')),
+    bytes BYTEA NOT NULL,
+    byte_size INTEGER NOT NULL CHECK(byte_size > 0 AND byte_size <= 2000000),
+    content_hash TEXT NOT NULL,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE(trip_id, owner_collection, owner_id, field_name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_media_assets_trip_owner
+    ON media_assets(trip_id, owner_collection, owner_id);
+
+  CREATE TABLE IF NOT EXISTS account_recovery_codes(
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ
+  );
+  CREATE INDEX IF NOT EXISTS idx_recovery_codes_user ON account_recovery_codes(user_id, expires_at);
+
+  INSERT INTO media_assets(
+    id,trip_id,owner_collection,owner_id,field_name,mime_type,bytes,byte_size,content_hash,created_by,created_at,updated_at
+  )
+  SELECT 'med_' || md5(p.trip_id || p.id || 'photo'),p.trip_id,'purchases',p.id,'photo',
+    CASE WHEN p.data->>'photo' LIKE 'data:image/png%' THEN 'image/png'
+         WHEN p.data->>'photo' LIKE 'data:image/webp%' THEN 'image/webp' ELSE 'image/jpeg' END,
+    decode(split_part(p.data->>'photo', ',', 2), 'base64'),
+    octet_length(decode(split_part(p.data->>'photo', ',', 2), 'base64')),
+    md5(p.data->>'photo'),p.updated_by,p.created_at,p.updated_at
+  FROM purchases p WHERE p.data->>'photo' ~ '^data:image/(jpeg|png|webp);base64,'
+  ON CONFLICT DO NOTHING;
+  UPDATE purchases p SET data=(p.data - 'photo') || jsonb_build_object(
+    'photoAssetId','med_' || md5(p.trip_id || p.id || 'photo'),
+    'photo','/api/media/' || 'med_' || md5(p.trip_id || p.id || 'photo')
+  ) WHERE p.data->>'photo' ~ '^data:image/(jpeg|png|webp);base64,';
+
+  INSERT INTO media_assets(
+    id,trip_id,owner_collection,owner_id,field_name,mime_type,bytes,byte_size,content_hash,created_by,created_at,updated_at
+  )
+  SELECT 'med_' || md5(p.trip_id || p.id || 'backgroundImage'),p.trip_id,'places',p.id,'backgroundImage',
+    CASE WHEN p.data->>'backgroundImage' LIKE 'data:image/png%' THEN 'image/png'
+         WHEN p.data->>'backgroundImage' LIKE 'data:image/webp%' THEN 'image/webp' ELSE 'image/jpeg' END,
+    decode(split_part(p.data->>'backgroundImage', ',', 2), 'base64'),
+    octet_length(decode(split_part(p.data->>'backgroundImage', ',', 2), 'base64')),
+    md5(p.data->>'backgroundImage'),p.updated_by,p.created_at,p.updated_at
+  FROM places p WHERE p.data->>'backgroundImage' ~ '^data:image/(jpeg|png|webp);base64,'
+  ON CONFLICT DO NOTHING;
+  UPDATE places p SET data=(p.data - 'backgroundImage') || jsonb_build_object(
+    'backgroundImageAssetId','med_' || md5(p.trip_id || p.id || 'backgroundImage'),
+    'backgroundImage','/api/media/' || 'med_' || md5(p.trip_id || p.id || 'backgroundImage')
+  ) WHERE p.data->>'backgroundImage' ~ '^data:image/(jpeg|png|webp);base64,';
+  `,
+  `
+  ALTER TABLE financial_projection_state ADD COLUMN IF NOT EXISTS projection_version INTEGER NOT NULL DEFAULT 1;
+  UPDATE purchases
+  SET data=(data - 'photoUrl') || jsonb_build_object('photo', data->>'photoUrl')
+  WHERE data ? 'photoAssetId' AND NOT (data ? 'photo') AND data->>'photoUrl' LIKE '/api/media/%';
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS entity_comments(
+    id TEXT PRIMARY KEY,
+    trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    entity_collection TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    body TEXT NOT NULL CHECK(char_length(body) BETWEEN 1 AND 2000),
+    mentions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_entity_comments_target
+    ON entity_comments(trip_id, entity_collection, entity_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_entity_comments_mentions
+    ON entity_comments USING GIN(mentions);
+
+  CREATE TABLE IF NOT EXISTS reminders(
+    id TEXT PRIMARY KEY,
+    trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    updated_by TEXT REFERENCES users(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_reminders_trip ON reminders(trip_id, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS route_estimates(
+    id TEXT PRIMARY KEY,
+    trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    route_key TEXT NOT NULL,
+    travel_mode TEXT NOT NULL CHECK(travel_mode IN ('WALKING','DRIVING','TRANSIT','BICYCLING')),
+    distance_meters INTEGER NOT NULL CHECK(distance_meters >= 0),
+    duration_seconds INTEGER NOT NULL CHECK(duration_seconds >= 0),
+    provider TEXT NOT NULL DEFAULT 'google-maps',
+    fetched_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    UNIQUE(trip_id, route_key, travel_mode)
+  );
+  CREATE INDEX IF NOT EXISTS idx_route_estimates_expiry ON route_estimates(expires_at);
+
+  UPDATE trips SET data=data || jsonb_build_object('timeZone','UTC') WHERE NOT (data ? 'timeZone');
+  `,
 ];
 
 async function migrate() {

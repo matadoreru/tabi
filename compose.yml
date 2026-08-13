@@ -49,6 +49,7 @@ services:
       TABI_GOOGLE_MAPS_MAP_ID: "${TABI_GOOGLE_MAPS_MAP_ID:-}"
       TABI_PUBLIC_ORIGIN: "${TABI_PUBLIC_ORIGIN:-}"
       TABI_SECURE_COOKIE: "${TABI_SECURE_COOKIE:-true}"
+      TABI_METRICS_TOKEN: "${TABI_METRICS_TOKEN:-}"
     ports:
       - "127.0.0.1:${TABI_HOST_PORT:-4173}:4173"
     depends_on:
@@ -63,7 +64,7 @@ services:
       - ALL
     pids_limit: 100
     labels:
-      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.enable=${TABI_WATCHTOWER_ENABLE:-false}"
     healthcheck:
       test:
         - CMD

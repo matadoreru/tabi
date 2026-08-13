@@ -10,12 +10,20 @@ export function publish(tripId, event) {
       clients.get(tripId)?.delete(controller);
     }
   }
+  if (clients.get(tripId)?.size === 0) clients.delete(tripId);
 }
 
 export function eventStream(tripId, signal) {
   let heartbeat;
+  let streamController;
+  const remove = () => {
+    clearInterval(heartbeat);
+    if (streamController) clients.get(tripId)?.delete(streamController);
+    if (clients.get(tripId)?.size === 0) clients.delete(tripId);
+  };
   const stream = new ReadableStream({
     start(controller) {
+      streamController = controller;
       if (!clients.has(tripId)) clients.set(tripId, new Set());
       clients.get(tripId).add(controller);
       controller.enqueue(encoder.encode(`event: connected\ndata: ${JSON.stringify({ tripId })}\n\n`));
@@ -27,15 +35,14 @@ export function eventStream(tripId, signal) {
         }
       }, 25000);
       signal.addEventListener("abort", () => {
-        clearInterval(heartbeat);
-        clients.get(tripId)?.delete(controller);
+        remove();
         try {
           controller.close();
         } catch { /* closed */ }
       });
     },
     cancel() {
-      clearInterval(heartbeat);
+      remove();
     },
   });
   return new Response(stream, {

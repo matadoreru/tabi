@@ -1,5 +1,6 @@
 import { apiClient } from "./api-client.js";
 import { rateKey } from "./currency.js";
+import { tripCache } from "./offline-cache.js";
 
 const SETTINGS_KEY = "tabi-settings-v2";
 const LEGACY_KEY = "tabi-data-v1";
@@ -16,6 +17,7 @@ const COLLECTIONS = [
   "reservations",
   "inspirations",
   "notes",
+  "reminders",
 ];
 
 export class Store {
@@ -29,6 +31,11 @@ export class Store {
       members: [],
       invitations: [],
       logs: [],
+      financialTransactions: [],
+      expenseSplits: [],
+      settlementBalances: [],
+      settlementTransfers: [],
+      connectionStatus: "online",
       exchangeRates: {},
       exchangeRateMeta: {},
       ...Object.fromEntries(COLLECTIONS.map((name) => [name, []])),
@@ -56,7 +63,30 @@ export class Store {
     return this.state[name] || [];
   }
   async loadTrip(tripId, onRemoteChange) {
-    const payload = await apiClient.get(`/trips/${tripId}/bootstrap`);
+    let payload;
+    try {
+      payload = await apiClient.get(`/trips/${tripId}/bootstrap`);
+      await tripCache.put(tripId, payload);
+      this.state.connectionStatus = "online";
+    } catch (error) {
+      if (globalThis.navigator?.onLine !== false && !(error instanceof TypeError)) throw error;
+      payload = await tripCache.get(tripId);
+      if (!payload) throw error;
+      payload = { ...payload, offline: true };
+      this.state.connectionStatus = "offline";
+    }
+    for (const queued of await tripCache.queued(tripId)) {
+      payload[queued.collection] ||= [];
+      if (!payload[queued.collection].some((item) => item.id === queued.temporaryId)) {
+        payload[queued.collection].push({
+          ...queued.item,
+          id: queued.temporaryId,
+          tripId,
+          version: 0,
+          offlinePending: true,
+        });
+      }
+    }
     const exchange = await this.loadExchangeRates(payload);
     this.state = { ...this.state, ...payload, ...exchange, trips: [payload.trip], activeTripId: tripId };
     this.connectEvents(tripId, onRemoteChange);
@@ -132,27 +162,78 @@ export class Store {
     this.notify();
   }
   async add(collection, item) {
+    if (globalThis.navigator?.onLine === false) {
+      const pending = {
+        ...item,
+        id: `offline_${crypto.randomUUID().replaceAll("-", "")}`,
+        tripId: this.state.activeTripId,
+        version: 0,
+        offlinePending: true,
+      };
+      await tripCache.queue({ tripId: this.state.activeTripId, collection, temporaryId: pending.id, item });
+      this.state[collection].push(pending);
+      this.state.connectionStatus = "offline";
+      this.notify();
+      return pending;
+    }
     const result = await apiClient.post(`/trips/${this.state.activeTripId}/${collection}`, item);
     this.state[collection].push(result.item);
+    this.applyFinancialResult(result);
+    await this.persistCurrentTrip();
     this.notify();
     return result.item;
   }
+  async flushOutbox() {
+    if (!this.state.activeTripId || globalThis.navigator?.onLine === false) return;
+    for (const queued of await tripCache.queued(this.state.activeTripId)) {
+      try {
+        const result = await apiClient.post(`/trips/${queued.tripId}/${queued.collection}`, queued.item);
+        const index = this.state[queued.collection].findIndex((item) => item.id === queued.temporaryId);
+        if (index >= 0) this.state[queued.collection][index] = result.item;
+        this.applyFinancialResult(result);
+        await tripCache.dequeue(queued.queueId);
+      } catch (error) {
+        if (error instanceof TypeError) break;
+        this.state.connectionStatus = "sync-error";
+        break;
+      }
+    }
+    await this.persistCurrentTrip();
+    this.notify();
+  }
   async edit(collection, id, changes) {
     const current = this.state[collection].find((item) => item.id === id);
+    if (current?.offlinePending) throw new Error("El borrador debe sincronizarse antes de editarlo.");
     const result = await apiClient.patch(`/trips/${this.state.activeTripId}/${collection}/${id}`, {
       ...changes,
       version: current?.version,
     });
     const index = this.state[collection].findIndex((item) => item.id === id);
     if (index >= 0) this.state[collection][index] = result.item;
+    this.applyFinancialResult(result);
+    await this.persistCurrentTrip();
     this.notify();
     return result.item;
   }
   async remove(collection, id) {
     const current = this.state[collection].find((item) => item.id === id);
-    await apiClient.delete(`/trips/${this.state.activeTripId}/${collection}/${id}`, { version: current?.version });
+    if (current?.offlinePending) throw new Error("El borrador debe sincronizarse antes de eliminarlo.");
+    const result = await apiClient.delete(`/trips/${this.state.activeTripId}/${collection}/${id}`, {
+      version: current?.version,
+    });
     this.state[collection] = this.state[collection].filter((item) => item.id !== id);
+    this.applyFinancialResult(result);
+    await this.persistCurrentTrip();
     this.notify();
+  }
+  applyFinancialResult(result) {
+    for (const key of ["financialTransactions", "expenseSplits", "settlementBalances", "settlementTransfers"]) {
+      if (result?.[key]) this.state[key] = result[key];
+    }
+  }
+  persistCurrentTrip() {
+    if (!this.state.activeTripId) return Promise.resolve();
+    return tripCache.put(this.state.activeTripId, { ...this.state, trip: this.activeTrip });
   }
   hasLegacyData() {
     return Boolean(localStorage.getItem(LEGACY_KEY));
@@ -178,6 +259,15 @@ export class Store {
     this.eventSource?.close();
     const source = new EventSource(`/api/trips/${tripId}/events`);
     this.eventSource = source;
+    source.onopen = () => {
+      this.state.connectionStatus = "online";
+      this.flushOutbox();
+      this.notify();
+    };
+    source.onerror = () => {
+      this.state.connectionStatus = navigator.onLine ? "reconnecting" : "offline";
+      this.notify();
+    };
     source.addEventListener("trip-change", async (event) => {
       const change = JSON.parse(event.data);
       if (onRemoteChange) await onRemoteChange(change);
@@ -186,5 +276,8 @@ export class Store {
   closeEvents() {
     this.eventSource?.close();
     this.eventSource = null;
+  }
+  clearOfflineData() {
+    return tripCache.clearAll();
   }
 }

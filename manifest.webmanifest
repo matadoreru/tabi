@@ -3,6 +3,8 @@
   "short_name": "Tabi",
   "description": "Organiza itinerarios, lugares, reservas y presupuesto en un solo lugar.",
   "start_url": "./",
+  "id": "/",
+  "scope": "/",
   "share_target": {
     "action": "/share",
     "method": "GET",
@@ -15,5 +17,25 @@
   "display": "standalone",
   "background_color": "#f7f6f2",
   "theme_color": "#e5484d",
+  "shortcuts": [
+    {
+      "name": "Itinerario de hoy",
+      "short_name": "Itinerario",
+      "url": "/#itinerary",
+      "icons": [{ "src": "./assets/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Abrir mapa",
+      "short_name": "Mapa",
+      "url": "/#map",
+      "icons": [{ "src": "./assets/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Lista TODO",
+      "short_name": "TODO",
+      "url": "/#tasks",
+      "icons": [{ "src": "./assets/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ],
   "icons": [{ "src": "./assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
 }

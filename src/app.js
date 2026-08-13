@@ -4,6 +4,7 @@ import {
   convertCurrency,
   currencyDefinition,
   currencyOptions,
+  rateBetween,
   rateKey,
   tripCurrencyConfig,
 } from "./currency.js";
@@ -45,8 +46,19 @@ import { apiClient, ApiError } from "./api-client.js";
 import { session } from "./session.js";
 import { PERMISSIONS, ROLE_LABELS } from "./permissions.js";
 import { initializeImageLightbox } from "./lightbox.js";
+import { canonicalBudgetSummary } from "./finance.js";
+import { convertMoney, moneyToNumber } from "./money.js";
+import { NAVIGATION, ROUTE_DESCRIPTIONS, ROUTE_LABELS } from "./navigation.js";
+import { browserTimeZone, timeZoneOptions, todayInTimeZone } from "./time.js";
+import { exportTripIcs } from "./calendar.js";
+import { googlePlaceMetadata, itineraryRoutePairs, placeMetadataIsStale } from "./places.js";
+import { DEFAULT_TEMPLATE_COLLECTIONS, DUPLICABLE_COLLECTIONS } from "./templates.js";
+import { TRIP_PHASES, tripPhase, tripPhaseCopy } from "./trip-phase.js";
+import { pwaManager } from "./pwa.js";
+import { tripCache } from "./offline-cache.js";
 
 const store = new Store();
+const LAST_TRIP_KEY = "tabi-last-trip-v1";
 const MONEY_OPTIONS = currencyOptions();
 const app = document.querySelector("#app");
 const ui = {
@@ -61,39 +73,14 @@ const ui = {
   inspirationStatus: "Todos",
   commitSha: "",
   busy: false,
+  routeEstimates: {},
+  unseenChanges: 0,
+  pwaDiagnostics: null,
 };
 
-const NAV = [
-  ["dashboard", "Dashboard", "dashboard"],
-  ["itinerary", "Itinerario", "calendar"],
-  ["map", "Mapa", "map"],
-  ["places", "Lugares", "pin"],
-  ["reservations", "Reservas", "ticket"],
-  ["stays", "Hospedaje", "bed"],
-  ["transport", "Transporte", "train"],
-  ["budget", "Presupuesto", "wallet"],
-  ["purchases", "Compras", "bag"],
-  ["tasks", "TODO", "check"],
-  ["notes", "Notas", "note"],
-  ["inspiration", "Inspiración", "play"],
-  ["settings", "Configuración", "settings"],
-];
-const ROUTES = Object.fromEntries(NAV.map(([key, label]) => [key, label]));
-const DESCRIPTIONS = {
-  dashboard: "Todo lo importante, de un vistazo",
-  itinerary: "Organiza cada día sin prisas ni solapamientos",
-  map: "Explora tus lugares y agrúpalos por zonas",
-  places: "Tu colección de sitios por descubrir",
-  purchases: "Caprichos, regalos y encargos bajo control",
-  tasks: "Una lista clara de todo lo que queda por hacer",
-  notes: "Ideas y apuntes del viaje, siempre a mano",
-  budget: "Previsión y gasto real en un mismo sitio",
-  stays: "Tus alojamientos y check-ins",
-  transport: "Todos tus trayectos, conectados",
-  reservations: "Referencias y horarios siempre a mano",
-  inspiration: "Vídeos e ideas que quieres recordar para este viaje",
-  settings: "Personaliza el viaje y protege tus datos",
-};
+const NAV = NAVIGATION;
+const ROUTES = ROUTE_LABELS;
+const DESCRIPTIONS = ROUTE_DESCRIPTIONS;
 
 const fields = {
   activity: [
@@ -111,6 +98,12 @@ const fields = {
       full: true,
     },
     { name: "date", label: "Fecha", type: "date", required: true },
+    {
+      name: "timeZone",
+      label: "Zona horaria",
+      type: "select",
+      options: () => timeZoneOptions(store.activeTrip?.timeZone),
+    },
     {
       name: "type",
       label: "Categoría",
@@ -302,6 +295,13 @@ const fields = {
     { name: "actualAmount", label: "Importe pagado", type: "number", min: 0, step: "0.01" },
     { name: "paymentStatus", label: "Pago", type: "select", options: ["Pendiente", "Parcial", "Pagado"] },
     { name: "paidByUserId", label: "Pagado por", type: "select", empty: "Fondo común / sin asignar" },
+    {
+      name: "splitMemberIds",
+      label: "Repartir entre",
+      type: "checkbox-group",
+      help: "Si seleccionas viajeros, el importe pagado se reparte a partes iguales.",
+      full: true,
+    },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
   fund: [
@@ -330,6 +330,12 @@ const fields = {
     { name: "address", label: "Dirección" },
     { name: "checkInDate", label: "Entrada", type: "date", required: true },
     { name: "checkInTime", label: "Hora de entrada", type: "time" },
+    {
+      name: "timeZone",
+      label: "Zona horaria",
+      type: "select",
+      options: () => timeZoneOptions(store.activeTrip?.timeZone),
+    },
     { name: "checkOutDate", label: "Salida", type: "date", required: true },
     { name: "checkOutTime", label: "Hora de salida", type: "time" },
     { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
@@ -370,8 +376,20 @@ const fields = {
     { name: "destination", label: "Destino", required: true },
     { name: "departureDate", label: "Fecha de salida", type: "date", required: true },
     { name: "departureTime", label: "Hora de salida", type: "time", required: true },
+    {
+      name: "departureTimeZone",
+      label: "Zona de salida",
+      type: "select",
+      options: () => timeZoneOptions(store.activeTrip?.timeZone),
+    },
     { name: "arrivalDate", label: "Fecha de llegada", type: "date" },
     { name: "arrivalTime", label: "Hora de llegada", type: "time" },
+    {
+      name: "arrivalTimeZone",
+      label: "Zona de llegada",
+      type: "select",
+      options: () => timeZoneOptions(store.activeTrip?.timeZone),
+    },
     { name: "duration", label: "Duración (min)", type: "number", min: 0 },
     { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
     { name: "price", label: "Precio", type: "number", min: 0, step: "0.01" },
@@ -405,10 +423,33 @@ const fields = {
     },
     { name: "date", label: "Fecha", type: "date", required: true },
     { name: "time", label: "Hora", type: "time" },
+    {
+      name: "timeZone",
+      label: "Zona horaria",
+      type: "select",
+      options: () => timeZoneOptions(store.activeTrip?.timeZone),
+    },
+    {
+      name: "linkedEntity",
+      label: "Vinculada a",
+      type: "select",
+      empty: "Sin vincular",
+      options: () => reservationLinkOptions(),
+    },
     { name: "reference", label: "Referencia" },
     { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
     { name: "price", label: "Precio total", type: "number", min: 0, step: "0.01" },
     { name: "paidAmount", label: "Importe pagado", type: "number", min: 0, step: "0.01" },
+    {
+      name: "budgetMode",
+      label: "Presupuesto",
+      type: "select",
+      options: [
+        { value: "included", label: "Incluir esta reserva" },
+        { value: "reference", label: "Solo referencia (ya contabilizada en otra sección)" },
+      ],
+      full: true,
+    },
     { name: "paymentStatus", label: "Pago", type: "select", options: ["Pendiente", "Parcial", "Pagado"] },
     { name: "status", label: "Estado", type: "select", options: ["Pendiente", "Confirmada", "Realizada", "Cancelada"] },
     { name: "link", label: "Documento / enlace", type: "url", full: true },
@@ -457,10 +498,26 @@ function resolvedFields(type, values = {}) {
       ? fundContributorOptions(store.getState().members, values.contributor)
       : ["task:assigneeId", "expense:paidByUserId"].includes(`${type}:${field.name}`)
       ? memberOptions(values[field.name])
+      : type === "expense" && field.name === "splitMemberIds"
+      ? memberOptions().filter((option) => !option.value.startsWith("usr_missing"))
       : typeof field.options === "function"
       ? field.options()
       : field.options,
   }));
+}
+
+function reservationLinkOptions() {
+  return [
+    ...store.collection("stays").map((item) => ({ value: `stays:${item.id}`, label: `Hospedaje · ${item.name}` })),
+    ...store.collection("transports").map((item) => ({
+      value: `transports:${item.id}`,
+      label: `Transporte · ${item.origin} → ${item.destination}`,
+    })),
+    ...store.collection("activities").map((item) => ({
+      value: `activities:${item.id}`,
+      label: `Actividad · ${item.title}`,
+    })),
+  ];
 }
 
 function memberOptions(currentId = "") {
@@ -487,7 +544,7 @@ function addDaysIso(date, days) {
 }
 function activeDate() {
   const trip = store.activeTrip;
-  const today = todayIso();
+  const today = todayInTimeZone(trip.timeZone);
   if (!ui.selectedDate) ui.selectedDate = today >= trip.startDate && today <= trip.endDate ? today : trip.startDate;
   return ui.selectedDate;
 }
@@ -518,6 +575,61 @@ function itemToPrimary(amount, item) {
     return Number(amount || 0) * snapshot;
   }
   return itemCurrency(item) === store.activeTrip.currency ? Number(amount || 0) : 0;
+}
+function canonicalSummary() {
+  return canonicalBudgetSummary(
+    normalizedBudgetTrip(),
+    store.collection("financialTransactions"),
+    canonicalMoneyToPrimary,
+  );
+}
+function canonicalMoneyToPrimary(amount, entry = null) {
+  if (amount.currency === store.activeTrip.currency) return moneyToNumber(amount);
+  const rate = rateBetween(amount.currency, store.activeTrip.currency, moneyConfig().rates);
+  if (rate) return moneyToNumber(convertMoney(amount, store.activeTrip.currency, rate));
+  const snapshot = entry?.exchange;
+  if (
+    snapshot?.base === amount.currency && snapshot?.quote === store.activeTrip.currency && Number(snapshot.rate) > 0
+  ) {
+    return moneyToNumber(convertMoney(amount, store.activeTrip.currency, snapshot.rate));
+  }
+  return 0;
+}
+function canonicalChartItems() {
+  return store.collection("financialTransactions").filter((entry) => entry.kind === "paid").map((entry) => ({
+    category: entry.category,
+    actualAmount: canonicalMoneyToPrimary(entry.amount, entry),
+  }));
+}
+function canonicalMovementItems() {
+  const grouped = new Map();
+  for (const entry of store.collection("financialTransactions")) {
+    if (entry.kind === "fund") continue;
+    const key = `${entry.sourceCollection}:${entry.sourceId}`;
+    const item = grouped.get(key) || {
+      id: entry.sourceId,
+      sourceCollection: entry.sourceCollection,
+      title: entry.title,
+      category: entry.category,
+      date: entry.occurredOn,
+      city: entry.sourceCollection,
+      paidByName: memberName(entry.payerId, "Sin asignar"),
+      currency: store.activeTrip.currency,
+      estimatedAmount: 0,
+      actualAmount: 0,
+      paymentStatus: "Pendiente",
+    };
+    const amount = canonicalMoneyToPrimary(entry.amount, entry);
+    if (entry.kind === "paid") item.actualAmount += amount;
+    if (entry.kind === "refund") item.actualAmount -= amount;
+    if (["committed", "planned"].includes(entry.kind)) item.estimatedAmount += amount;
+    grouped.set(key, item);
+  }
+  return [...grouped.values()].map((item) => ({
+    ...item,
+    estimatedAmount: item.estimatedAmount + item.actualAmount,
+    paymentStatus: item.estimatedAmount > 0 ? (item.actualAmount > 0 ? "Parcial" : "Pendiente") : "Pagado",
+  }));
 }
 function money(amount, currency = store.activeTrip.currency, options) {
   return moneyPair(amount, currency, moneyConfig(), options);
@@ -607,9 +719,9 @@ function applyTheme() {
 function navButton(route, label, iconName, mobile = false) {
   const active = ui.route === route ||
     (mobile && route === "more" && !["dashboard", "itinerary", "map", "budget"].includes(ui.route));
-  return `<button class="nav-link ${active ? "active" : ""}" data-route="${route}">${
-    icon(iconName)
-  }<span>${label}</span></button>`;
+  return `<button class="nav-link ${active ? "active" : ""}" data-route="${route}" ${
+    active ? 'aria-current="page"' : ""
+  }>${icon(iconName)}<span>${label}</span></button>`;
 }
 
 function versionReference(className = "") {
@@ -631,7 +743,9 @@ function layout(content) {
   }</strong><small>${formatDate(trip.startDate)} — ${formatDate(trip.endDate)}</small></span></div>${
     versionReference("app-version-sidebar")
   }</div></aside>
-    <main class="main"><header class="topbar"><div class="page-heading"><h1>${ROUTES[ui.route] || "Tabi"}</h1><p>${
+    <main class="main" id="main-content" tabindex="-1"><header class="topbar"><div class="page-heading"><h1>${
+    ROUTES[ui.route] || "Tabi"
+  }</h1><p>${
     DESCRIPTIONS[ui.route] || ""
   }</p></div><div class="top-actions"><button class="avatar-stack desktop-only" data-route="settings" aria-label="Miembros del viaje">${
     members.slice(0, 3).map((member) => avatar(member.user)).join("")
@@ -641,7 +755,27 @@ function layout(content) {
       : ""
   }<button class="btn btn-secondary desktop-only" data-trip-list>Mis viajes</button><button class="btn btn-secondary icon-btn" data-theme-toggle aria-label="Cambiar tema">${
     icon(document.documentElement.dataset.theme === "dark" ? "sun" : "moon")
-  }</button></div></header><div class="content ${ui.route === "map" ? "content-map" : ""}">${content}</div>${
+  }</button></div></header>${
+    store.getState().connectionStatus === "online"
+      ? ""
+      : `<div class="connection-banner" role="status">${
+        store.getState().connectionStatus === "offline"
+          ? "Sin conexión · mostrando la última copia disponible"
+          : store.getState().connectionStatus === "sync-error"
+          ? "Hay cambios pendientes que no se han podido sincronizar"
+          : "Reconectando cambios compartidos…"
+      }</div>`
+  }${
+    pwaManager.updateAvailable
+      ? `<div class="pwa-banner" role="status"><span>${
+        icon("sync")
+      } Hay una versión nueva de Tabi preparada.</span><button class="btn btn-primary" type="button" data-update-pwa>Actualizar ahora</button></div>`
+      : pwaManager.installPrompt
+      ? `<div class="pwa-banner" role="status"><span>${
+        icon("download")
+      } Instala Tabi para abrirla como una aplicación.</span><button class="btn btn-secondary" type="button" data-install-pwa>Instalar</button></div>`
+      : ""
+  }<div class="content ${ui.route === "map" ? "content-map" : ""}">${content}</div>${
     versionReference("app-version-project-mobile")
   }</main>
     <nav class="mobile-nav">${navButton("dashboard", "Inicio", "dashboard", true)}${
@@ -703,15 +837,17 @@ function renderAuth(error = "") {
       register
         ? ""
         : `<div class="field full"><label>Usuario o email</label><input name="identifier" required maxlength="254" autocomplete="username" placeholder="hortensi o tu@email.com"></div>`
-    }<div class="field full"><label>Contraseña</label><input name="password" type="password" required minlength="6" maxlength="200" autocomplete="${
-      register ? "new-password" : "current-password"
-    }"><span class="field-help">Mínimo 6 caracteres.</span></div><div class="field full"><button class="btn btn-primary" type="submit" ${
-      ui.busy ? "disabled" : ""
-    }>${
+    }<div class="field full"><label>Contraseña</label><input name="password" type="password" required minlength="${
+      register ? "10" : "1"
+    }" maxlength="200" autocomplete="${register ? "new-password" : "current-password"}"><span class="field-help">${
+      register ? "Mínimo 10 caracteres." : ""
+    }</span></div><div class="field full"><button class="btn btn-primary" type="submit" ${ui.busy ? "disabled" : ""}>${
       ui.busy ? "Un momento…" : register ? "Crear cuenta" : "Iniciar sesión"
     }</button></div></form><button class="btn btn-ghost" data-auth-mode="${register ? "login" : "register"}">${
       register ? "Ya tengo cuenta" : "Crear una cuenta"
-    }</button></section><aside class="auth-art"><div><h2>Planear juntos hace que el viaje empiece antes.</h2><p>Itinerario, presupuesto y reservas sincronizados para todo el equipo.</p></div></aside>${
+    }</button>${
+      register ? "" : `<button class="btn btn-ghost" data-recover>Usar código de recuperación</button>`
+    }</section><aside class="auth-art"><div><h2>Planear juntos hace que el viaje empiece antes.</h2><p>Itinerario, presupuesto y reservas sincronizados para todo el equipo.</p></div></aside>${
       versionReference("app-version-auth")
     }</main>`;
   bindAuth();
@@ -722,6 +858,7 @@ function bindAuth() {
     ui.authMode = app.querySelector("[data-auth-mode]").dataset.authMode;
     renderAuth();
   });
+  app.querySelector("[data-recover]")?.addEventListener("click", recoveryDialog);
   app.querySelector("#auth-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     ui.busy = true;
@@ -744,8 +881,9 @@ function renderTripsDashboard() {
   if (!session.currentUser) return renderAuth();
   applyTheme();
   const today = todayIso();
-  const upcoming = session.trips.filter((trip) => trip.endDate >= today);
-  const past = session.trips.filter((trip) => trip.endDate < today);
+  const templates = session.trips.filter((trip) => trip.isTemplate);
+  const upcoming = session.trips.filter((trip) => !trip.isTemplate && trip.endDate >= today);
+  const past = session.trips.filter((trip) => !trip.isTemplate && trip.endDate < today);
   app.innerHTML =
     `<main class="trips-shell"><header class="trips-header"><a class="brand" href="/"><span class="brand-mark">旅</span><span>Tabi<small>Travel planner</small></span></a><div class="top-actions">${
       avatar(session.currentUser)
@@ -767,6 +905,12 @@ function renderTripsDashboard() {
         `<button class="btn btn-primary" data-create-trip>${icon("plus")} Crear viaje</button>`,
       )
     }</div></section>${
+      templates.length
+        ? `<section><div class="section-title"><div><h2>Plantillas</h2><p>Planes reutilizables con fechas relativas</p></div></div><div class="grid grid-3">${
+          templates.map((trip) => tripCard(trip)).join("")
+        }</div></section>`
+        : ""
+    }${
       past.length
         ? `<section><div class="section-title"><div><h2>Viajes pasados</h2><p>Recuerdos y planes que puedes duplicar</p></div></div><div class="grid grid-3">${
           past.map(tripCard).join("")
@@ -785,10 +929,22 @@ function tripCard(trip) {
     badge(ROLE_LABELS[trip.role], trip.role === "owner" ? "red" : "blue")
   } <span class="cell-sub" style="display:inline">${trip.memberCount} miembros</span></div></div>${
     icon("chevron")
-  }</button><footer><span>${trip.role === "owner" ? "Viaje propio" : "Compartido contigo"}</span><div>${
-    trip.role !== "viewer"
+  }</button><footer><span>${
+    trip.isTemplate ? "Plantilla reutilizable" : trip.role === "owner" ? "Viaje propio" : "Compartido contigo"
+  }</span><div>${
+    trip.isTemplate && trip.role !== "viewer"
+      ? `<button class="btn btn-ghost icon-btn" data-use-template="${trip.id}" title="Crear viaje desde esta plantilla" aria-label="Usar plantilla">${
+        icon("plus")
+      }</button>`
+      : trip.role !== "viewer"
       ? `<button class="btn btn-ghost icon-btn" data-duplicate-trip="${trip.id}" title="Duplicar">${
         icon("file")
+      }</button>`
+      : ""
+  }${
+    !trip.isTemplate && trip.role !== "viewer"
+      ? `<button class="btn btn-ghost icon-btn" data-save-template="${trip.id}" title="Guardar como plantilla" aria-label="Guardar como plantilla">${
+        icon("calendar")
       }</button>`
       : ""
   }${
@@ -812,16 +968,13 @@ function bindTripDashboard() {
   );
   app.querySelectorAll("[data-create-trip]").forEach((button) => button.addEventListener("click", createTrip));
   app.querySelectorAll("[data-duplicate-trip]").forEach((button) =>
-    button.addEventListener("click", async () => {
-      try {
-        const result = await apiClient.post(`/trips/${button.dataset.duplicateTrip}/duplicate`);
-        await session.loadTrips();
-        toast("Viaje duplicado");
-        await enterTrip(result.tripId);
-      } catch (error) {
-        toast(error.message, "error");
-      }
-    })
+    button.addEventListener("click", () => duplicateTripDialog(button.dataset.duplicateTrip, false))
+  );
+  app.querySelectorAll("[data-use-template]").forEach((button) =>
+    button.addEventListener("click", () => duplicateTripDialog(button.dataset.useTemplate, false))
+  );
+  app.querySelectorAll("[data-save-template]").forEach((button) =>
+    button.addEventListener("click", () => duplicateTripDialog(button.dataset.saveTemplate, true))
   );
   app.querySelectorAll("[data-leave-trip]").forEach((button) =>
     button.addEventListener("click", async () => {
@@ -854,6 +1007,82 @@ function bindTripDashboard() {
   app.querySelector("[data-logout]")?.addEventListener("click", performLogout);
 }
 
+const DUPLICATE_COLLECTION_LABELS = Object.freeze({
+  activities: "Itinerario",
+  places: "Lugares",
+  tasks: "TODO",
+  purchases: "Compras previstas",
+  expenses: "Gastos registrados",
+  funds: "Fondos aportados",
+  stays: "Hospedajes",
+  transports: "Transportes",
+  reservations: "Reservas",
+  inspirations: "Inspiración",
+  notes: "Notas",
+  reminders: "Recordatorios",
+});
+
+function duplicateTripDialog(tripId, asTemplate) {
+  const source = session.trips.find((trip) => trip.id === tripId);
+  if (!source) return;
+  modal({
+    title: asTemplate
+      ? "Guardar viaje como plantilla"
+      : source.isTemplate
+      ? "Crear viaje desde plantilla"
+      : "Duplicar viaje",
+    fields: [
+      {
+        name: "name",
+        label: asTemplate ? "Nombre de la plantilla" : "Nombre del nuevo viaje",
+        required: true,
+        full: true,
+      },
+      ...(asTemplate ? [] : [{ name: "startDate", label: "Nueva fecha de inicio", type: "date", required: true }]),
+      {
+        name: "collections",
+        label: "Contenido que se copiará",
+        type: "checkbox-group",
+        options: DUPLICABLE_COLLECTIONS.map((value) => ({ value, label: DUPLICATE_COLLECTION_LABELS[value] })),
+        full: true,
+      },
+      {
+        name: "resetProgress",
+        label: "Estados y pagos",
+        type: "select",
+        options: [{ value: "true", label: "Reiniciar progreso y pagos" }, {
+          value: "false",
+          label: "Conservar estados actuales",
+        }],
+        full: true,
+      },
+    ],
+    values: {
+      name: asTemplate
+        ? `${source.name} · plantilla`
+        : source.isTemplate
+        ? source.name.replace(/\s*·\s*plantilla$/i, "")
+        : `${source.name} (copia)`,
+      startDate: source.isTemplate ? todayIso() : source.startDate,
+      collections: asTemplate ? DEFAULT_TEMPLATE_COLLECTIONS : DUPLICABLE_COLLECTIONS,
+      resetProgress: "true",
+    },
+    submitLabel: asTemplate ? "Crear plantilla" : "Crear copia",
+    onSubmit: async (values) => {
+      if (!values.collections?.length) throw new Error("Selecciona al menos una sección.");
+      const result = await apiClient.post(`/trips/${tripId}/duplicate`, {
+        ...values,
+        asTemplate,
+        resetProgress: values.resetProgress === "true",
+      });
+      await session.loadTrips();
+      toast(asTemplate ? "Plantilla creada" : "Viaje duplicado");
+      if (asTemplate) renderTripsDashboard();
+      else await enterTrip(result.tripId);
+    },
+  });
+}
+
 function createTrip() {
   modal({
     title: "Nuevo viaje",
@@ -871,6 +1100,14 @@ function createTrip() {
       { name: "startDate", label: "Inicio", type: "date", required: true },
       { name: "endDate", label: "Fin", type: "date", required: true },
       { name: "travelers", label: "Viajeros", type: "number", min: 1, value: 1 },
+      {
+        name: "timeZone",
+        label: "Zona horaria principal",
+        type: "select",
+        options: timeZoneOptions(browserTimeZone()),
+        value: browserTimeZone(),
+        full: true,
+      },
       { name: "budget", label: "Presupuesto", type: "number", min: 0 },
       { name: "currency", label: "Moneda principal", type: "select", options: MONEY_OPTIONS },
       { name: "secondaryCurrency", label: "Moneda secundaria", type: "select", options: MONEY_OPTIONS, value: "EUR" },
@@ -916,12 +1153,21 @@ async function enterTrip(tripId, route = "dashboard") {
   renderLoading("Cargando el viaje…");
   try {
     const payload = await store.loadTrip(tripId, handleRemoteChange);
+    const seenKey = `tabi-last-seen:${tripId}:${session.currentUser.id}`;
+    const lastSeen = localStorage.getItem(seenKey) || "";
+    ui.unseenChanges = payload.logs.filter((log) =>
+      log.userId !== session.currentUser.id && log.createdAt > lastSeen
+    ).length;
+    localStorage.setItem(seenKey, new Date().toISOString());
     session.selectTrip(payload);
+    localStorage.setItem(LAST_TRIP_KEY, tripId);
     ui.selectedDate = "";
     ui.itineraryScrollLeft = null;
     ui.route = route;
     location.hash = route;
+    await refreshPwaDiagnostics();
     render();
+    notifyDueReminders();
   } catch (error) {
     toast(error.message, "error");
     session.clearTrip();
@@ -933,8 +1179,27 @@ async function enterTrip(tripId, route = "dashboard") {
 async function handleRemoteChange(change) {
   if (change.user?.id === session.currentUser?.id) return;
   try {
-    const payload = await store.loadTrip(store.activeTrip.id, handleRemoteChange);
-    session.selectTrip(payload);
+    if (change.collection && Object.hasOwn(store.state, change.collection) && change.collection !== "trips") {
+      const items = store.state[change.collection];
+      const index = items.findIndex((item) => item.id === change.entityId);
+      if (change.action === "entity.deleted") {
+        if (index >= 0) items.splice(index, 1);
+      } else if (change.item) {
+        if (index >= 0) items[index] = change.item;
+        else items.push(change.item);
+      } else {
+        const result = await apiClient.get(`/trips/${store.activeTrip.id}/${change.collection}`);
+        store.state[change.collection] = result.items;
+      }
+      if (["expenses", "purchases", "funds", "stays", "transports", "reservations"].includes(change.collection)) {
+        store.applyFinancialResult(await apiClient.get(`/trips/${store.activeTrip.id}/finance`));
+      }
+      await store.persistCurrentTrip();
+      store.notify();
+    } else {
+      const payload = await store.loadTrip(store.activeTrip.id, handleRemoteChange);
+      session.selectTrip(payload);
+    }
     toast(`${change.user?.name || "Alguien"} ha actualizado el viaje`);
     render();
   } catch {
@@ -944,7 +1209,9 @@ async function handleRemoteChange(change) {
 
 async function performLogout() {
   store.closeEvents();
-  await session.logout();
+  await store.clearOfflineData();
+  navigator.serviceWorker?.controller?.postMessage({ type: "CLEAR_PRIVATE_CACHE" });
+  await session.logout().catch(() => {});
   history.replaceState({}, "", "/");
   renderAuth();
 }
@@ -967,7 +1234,7 @@ function renderShareTarget() {
   applyTheme();
   if (!session.currentUser) return renderAuth();
   const link = incomingInspiration();
-  const trips = session.trips.filter((trip) => trip.role !== "viewer");
+  const trips = session.trips.filter((trip) => trip.role !== "viewer" && !trip.isTemplate);
   const finish = () => {
     history.replaceState({}, "", "/");
     renderTripsDashboard();
@@ -1072,7 +1339,8 @@ async function renderInvitation() {
 function renderDashboard() {
   const trip = store.activeTrip;
   const allDates = dateRange(trip.startDate, trip.endDate);
-  const today = todayIso();
+  const today = todayInTimeZone(trip.timeZone);
+  const phase = tripPhase(trip, today);
   const date = today >= trip.startDate && today <= trip.endDate
     ? today
     : allDates.find((item) => item >= today) || trip.startDate;
@@ -1082,7 +1350,9 @@ function renderDashboard() {
   const purchases = normalizedPurchases();
   const stays = normalizedStays();
   const transports = normalizedTransports();
-  const summary = budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays, transports);
+  const summary = store.collection("financialTransactions").length
+    ? canonicalSummary()
+    : budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays, transports);
   const pendingTasks = store.collection("tasks").filter((task) => task.status !== "Completada");
   const pendingPurchases = store.collection("purchases").filter((item) =>
     item.status === "Pendiente" || item.status === "Encontrado"
@@ -1096,52 +1366,119 @@ function renderDashboard() {
       `${a.departureDate}${a.departureTime}`.localeCompare(`${b.departureDate}${b.departureTime}`)
     )[0];
   const countdown = daysUntil(trip.startDate);
-  const categoryTotals = groupTotals(budgetChartItems(expenses, purchases, stays, transports), "category");
+  const phaseCopy = tripPhaseCopy(phase, {
+    daysUntil: Math.max(0, countdown),
+    day: phase === TRIP_PHASES.DURING ? tripDay(today) : 1,
+    totalDays: allDates.length,
+  });
+  const currentStay = store.collection("stays").find((item) => item.checkInDate <= today && item.checkOutDate >= today);
+  const pendingReservations = store.collection("reservations").filter((item) =>
+    !["Confirmada", "Realizada", "Cancelada"].includes(item.status)
+  );
+  const visitedPlaces = store.collection("places").filter((item) => item.status === "Visitado").length;
+  const completedActivities = store.collection("activities").filter((item) => item.status === "done").length;
+  const settlementTransfers = store.collection("settlementTransfers");
+  const contextualStats = phase === TRIP_PHASES.BEFORE
+    ? [
+      statCard(
+        "calendar",
+        "Días para salir",
+        Math.max(0, countdown),
+        `${pendingReservations.length} reservas pendientes`,
+        "red",
+      ),
+      statCard(
+        "wallet",
+        "Presupuesto restante",
+        money(summary.remaining),
+        `${Math.round(summary.spent / Math.max(summary.budget, 1) * 100)}% utilizado`,
+        "",
+        true,
+      ),
+      statCard("ticket", "Reservas por confirmar", pendingReservations.length, "Revisa fechas límite", "amber"),
+      statCard(
+        "check",
+        "Tareas pendientes",
+        pendingTasks.length,
+        `${pendingTasks.filter((task) => task.priority === "Alta").length} de prioridad alta`,
+        "",
+      ),
+    ]
+    : phase === TRIP_PHASES.DURING
+    ? [
+      statCard("clock", "Próximo evento", upcoming?.start || "—", upcoming?.title || "Sin planes", "red"),
+      statCard(
+        "train",
+        "Próximo transporte",
+        nextTransport?.departureTime || "—",
+        nextTransport ? `${nextTransport.origin} → ${nextTransport.destination}` : "Sin trayectos",
+        "amber",
+      ),
+      statCard(
+        "bed",
+        "Alojamiento actual",
+        currentStay?.name || "—",
+        currentStay?.city || "Sin alojamiento para hoy",
+        "",
+      ),
+      statCard("wallet", "Disponible", money(summary.remaining), `${primaryMoney(summary.spent)} gastados`, "", true),
+    ]
+    : [
+      statCard("wallet", "Gasto final", money(summary.spent), `de ${primaryMoney(summary.budget)}`, "red", true),
+      statCard("pin", "Lugares visitados", visitedPlaces, `${store.collection("places").length} guardados`, ""),
+      statCard(
+        "check",
+        "Planes realizados",
+        completedActivities,
+        `${store.collection("activities").length} actividades`,
+        "",
+      ),
+      statCard(
+        "users",
+        "Ajustes pendientes",
+        settlementTransfers.length,
+        settlementTransfers.length ? "Revisa quién debe pagar" : "Cuentas equilibradas",
+        "amber",
+      ),
+    ];
+  const focusTitle = phase === TRIP_PHASES.BEFORE
+    ? "Antes de salir"
+    : phase === TRIP_PHASES.DURING
+    ? "Para hoy"
+    : "Cierre del viaje";
+  const focusDescription = phase === TRIP_PHASES.BEFORE
+    ? "Lo siguiente que conviene preparar"
+    : phase === TRIP_PHASES.DURING
+    ? "Pendientes que aún requieren atención"
+    : "Últimos pasos para dejar todo cerrado";
+  const focusItems = phase === TRIP_PHASES.AFTER
+    ? settlementTransfers.slice(0, 4).map((item) =>
+      `<div class="list-item"><span class="stat-icon amber">${
+        icon("users")
+      }</span><div class="list-item-main"><strong>${esc(memberName(item.fromUserId, "Viajero"))} → ${
+        esc(memberName(item.toUserId, "Viajero"))
+      }</strong><small>${primaryMoney(moneyToNumber(item.amount), item.amount.currency)}</small></div></div>`
+    ).join("")
+    : pendingTasks.slice(0, 4).map(taskRow).join("");
+  const categoryTotals = groupTotals(
+    store.collection("financialTransactions").length
+      ? canonicalChartItems()
+      : budgetChartItems(expenses, purchases, stays, transports),
+    "category",
+  );
   const max = Math.max(...categoryTotals.map(([, value]) => value), 1);
   return `<div class="section-stack">
-    <section class="hero card"><div><div class="hero-eyebrow">${
-    countdown > 0
-      ? "Próxima aventura"
-      : countdown >= -allDates.length
-      ? `Día ${tripDay(today)} de ${allDates.length}`
-      : "Tu aventura"
-  }</div><h2>${esc(trip.name)} ${trip.emoji}</h2><p>${formatDate(trip.startDate, { year: "numeric" })} — ${
+    <section class="hero card"><div><div class="hero-eyebrow">${phaseCopy.eyebrow}</div><h2>${
+    esc(trip.name)
+  } ${trip.emoji}</h2><p>${formatDate(trip.startDate, { year: "numeric" })} — ${
     formatDate(trip.endDate, { year: "numeric" })
-  } · ${trip.travelers} viajeros</p></div><div class="hero-footer"><div class="countdown">${
-    countdown > 0 ? `${countdown} días` : countdown === 0 ? "¡Hoy empieza!" : `${allDates.length} días`
-  }<small>${
-    countdown > 0 ? "para despegar" : "de viaje"
-  }</small></div><button class="btn" data-go-date="${date}">Ver itinerario ${icon("arrow")}</button></div></section>
+  } · ${trip.travelers} viajeros</p></div><div class="hero-footer"><div class="countdown">${phaseCopy.metric}<small>${phaseCopy.metricLabel}</small></div>${
+    phase === TRIP_PHASES.AFTER
+      ? `<button class="btn" data-export-project>${icon("download")} Guardar recuerdo</button>`
+      : `<button class="btn" data-go-date="${date}">Ver itinerario ${icon("arrow")}</button>`
+  }</div></section>
     <div class="grid grid-4 stats-mobile">
-      ${
-    statCard(
-      "wallet",
-      "Presupuesto restante",
-      money(summary.remaining),
-      `${Math.round(summary.spent / Math.max(summary.budget, 1) * 100)}% utilizado`,
-      "",
-      true,
-    )
-  }
-      ${statCard("clock", "Próximo evento", upcoming?.start || "—", upcoming?.title || "Sin planes", "red")}
-      ${
-    statCard(
-      "train",
-      "Próximo transporte",
-      nextTransport?.departureTime || "—",
-      nextTransport ? `${nextTransport.origin} → ${nextTransport.destination}` : "Sin trayectos",
-      "amber",
-    )
-  }
-      ${
-    statCard(
-      "check",
-      "Tareas pendientes",
-      pendingTasks.length,
-      `${pendingTasks.filter((task) => task.priority === "Alta").length} de prioridad alta`,
-      "",
-    )
-  }
+      ${contextualStats.join("")}
     </div>
     <div class="grid dashboard-grid"><div class="section-stack">
       <section class="card card-pad"><div class="card-head"><div><h2>${
@@ -1168,21 +1505,35 @@ function renderDashboard() {
         100,
     )
   }%"></span></div><div class="legend"><span>Planificado</span><span style="--dot:var(--surface-2)">Por organizar</span></div></section>
-      <section class="card card-pad"><div class="card-head"><div><h3>Prioridades</h3><p>Lo siguiente que conviene resolver</p></div></div><div class="item-list">${
-    pendingTasks.slice(0, 4).map(taskRow).join("") || emptyState("Todo listo", "No quedan tareas pendientes.")
+      <section class="card card-pad"><div class="card-head"><div><h3>${focusTitle}</h3><p>${focusDescription}</p></div></div><div class="item-list">${
+    focusItems ||
+    emptyState(
+      "Todo listo",
+      phase === TRIP_PHASES.AFTER ? "No quedan ajustes entre viajeros." : "No quedan tareas pendientes.",
+    )
   }</div></section>
-      <section class="card card-pad"><div class="card-head"><div><h3>Compras pendientes</h3><p>${
-    money(pendingPurchaseTotal)
-  } previstos</p></div></div><div class="item-list">${
-    pendingPurchases.slice(0, 3).map((item) =>
-      `<div class="list-item"><span class="stat-icon red">${icon("bag")}</span><div class="list-item-main"><strong>${
-        esc(item.product)
-      }</strong><small>${esc(item.city || "Sin ciudad")} · ${
-        primaryMoney(item.estimatedPrice, itemCurrency(item))
-      }</small></div></div>`
-    ).join("")
-  }</div></section>
-      <section class="card card-pad"><div class="card-head"><div><h3>Actividad reciente</h3><p>Cambios de todo el equipo</p></div></div><div class="activity-feed">${
+      ${
+    phase === TRIP_PHASES.AFTER
+      ? `<section class="card card-pad"><div class="card-head"><div><h3>Resumen del viaje</h3><p>Conserva o reutiliza este plan</p></div></div><div class="section-stack"><button class="btn btn-secondary" data-export-project>${
+        icon("download")
+      } Exportar proyecto</button><button class="btn btn-secondary" data-trip-list>${
+        icon("file")
+      } Duplicar desde Mis viajes</button></div></section>`
+      : `<section class="card card-pad"><div class="card-head"><div><h3>Compras pendientes</h3><p>${
+        money(pendingPurchaseTotal)
+      } previstos</p></div></div><div class="item-list">${
+        pendingPurchases.slice(0, 3).map((item) =>
+          `<div class="list-item"><span class="stat-icon red">${
+            icon("bag")
+          }</span><div class="list-item-main"><strong>${esc(item.product)}</strong><small>${
+            esc(item.city || "Sin ciudad")
+          } · ${primaryMoney(item.estimatedPrice, itemCurrency(item))}</small></div></div>`
+        ).join("")
+      }</div></section>`
+  }
+      <section class="card card-pad"><div class="card-head"><div><h3>Actividad reciente ${
+    ui.unseenChanges ? `<span class="badge red">${ui.unseenChanges} nuevas</span>` : ""
+  }</h3><p>Cambios de todo el equipo</p></div></div><div class="activity-feed">${
     store.collection("logs").slice(0, 5).map(activityLogRow).join("") ||
     `<p class="cell-sub">Todavía no hay actividad.</p>`
   }</div></section>
@@ -1213,6 +1564,18 @@ function relativeTime(value) {
   return `hace ${amount} ${label}${amount === 1 || label === "min" || label === "s" ? "" : "s"}`;
 }
 
+function formatBytes(value = 0) {
+  const bytes = Number(value || 0);
+  if (!bytes) return "0 MB";
+  return `${(bytes / 1024 / 1024).toLocaleString("es-ES", { maximumFractionDigits: 1 })} MB`;
+}
+
+async function refreshPwaDiagnostics() {
+  const offline = await tripCache.diagnostics(store.activeTrip?.id);
+  ui.pwaDiagnostics = await pwaManager.diagnostics(offline);
+  return ui.pwaDiagnostics;
+}
+
 function activityLogRow(log) {
   const title = log.metadata?.title || log.entityType;
   const messages = {
@@ -1225,6 +1588,7 @@ function activityLogRow(log) {
     "trip.updated": "actualizó la configuración del viaje",
     "trip.imported": "importó los datos del viaje",
     "trip.archive_imported": "importó un proyecto completo",
+    "comment.created": `comentó “${title}”`,
   };
   return `<div class="activity-row">${avatar({ name: log.userName, avatarUrl: log.avatarUrl })}<div><strong>${
     esc(log.userName)
@@ -1285,6 +1649,71 @@ function activityDisplay(item) {
     primary: item.location || item.city || item.type || "Actividad general",
     secondary: item.type && item.type !== "Otro" ? item.type : "",
   };
+}
+
+function activityCoordinates(item) {
+  if (Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng))) return item;
+  const kind = activityKindOf(item);
+  const source = kind === "Lugar"
+    ? store.collection("places").find(({ id }) => id === item.placeId)
+    : kind === "Hospedaje"
+    ? store.collection("stays").find(({ id }) => id === item.stayId)
+    : null;
+  return source && Number.isFinite(Number(source.lat)) && Number.isFinite(Number(source.lng))
+    ? { ...item, lat: Number(source.lat), lng: Number(source.lng) }
+    : item;
+}
+
+function routePairKey(pair, mode = "WALKING") {
+  return `${Number(pair.origin.lat).toFixed(5)},${Number(pair.origin.lng).toFixed(5)}>${
+    Number(pair.destination.lat).toFixed(5)
+  },${Number(pair.destination.lng).toFixed(5)}:${mode}`;
+}
+
+async function routeKeyDigest(pair, mode = "WALKING") {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(routePairKey(pair, mode)));
+  return [...new Uint8Array(bytes)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function calculateItineraryRoutes(button) {
+  const pairs = itineraryRoutePairs(activitiesForDate(activeDate()).map(activityCoordinates));
+  if (!pairs.length) return toast("Vincula coordenadas a dos actividades para calcular el trayecto.", "error");
+  button.disabled = true;
+  try {
+    const config = await apiClient.get("/config/maps");
+    if (!config.enabled) throw new Error("Configura Google Maps para calcular desplazamientos.");
+    await loadGoogleMaps(config.apiKey);
+    const { DirectionsService, TravelMode } = await google.maps.importLibrary("routes");
+    const service = new DirectionsService();
+    for (const pair of pairs) {
+      const mode = "WALKING";
+      const digest = await routeKeyDigest(pair, mode);
+      const cached = await apiClient.get(`/trips/${store.activeTrip.id}/route-estimates?key=${digest}&mode=${mode}`);
+      let estimate = cached.estimate;
+      if (!estimate) {
+        const result = await service.route({
+          origin: { lat: Number(pair.origin.lat), lng: Number(pair.origin.lng) },
+          destination: { lat: Number(pair.destination.lat), lng: Number(pair.destination.lng) },
+          travelMode: TravelMode.WALKING,
+        });
+        const leg = result.routes?.[0]?.legs?.[0];
+        if (!leg) continue;
+        estimate = {
+          routeKey: digest,
+          travelMode: mode,
+          durationSeconds: Number(leg.duration?.value || 0),
+          distanceMeters: Number(leg.distance?.value || 0),
+        };
+        await apiClient.post(`/trips/${store.activeTrip.id}/route-estimates`, estimate);
+      }
+      ui.routeEstimates[routePairKey(pair, mode)] = estimate;
+    }
+    toast("Desplazamientos actualizados");
+    render();
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message || "No se han podido calcular los trayectos.", "error");
+  }
 }
 function miniTimeline(items, showAction = true) {
   return items.length
@@ -1390,6 +1819,7 @@ function renderItinerary() {
   const date = activeDate();
   const items = activitiesForDate(date);
   const analysis = itineraryAnalysis(items);
+  const routePairs = itineraryRoutePairs(items.map(activityCoordinates));
   const conflictIds = new Set(analysis.conflicts.flatMap((item) => [item.first.id, item.second.id]));
   const body = `<div class="planner-layout"><section class="card planner">${
     analysis.sorted.length
@@ -1406,6 +1836,12 @@ function renderItinerary() {
         }</strong><small>${esc(display.primary)} · ${durationLabel(timeDiff(item.start, item.end))}</small>${
           display.secondary ? `<span class="event-context">${esc(display.secondary)}</span>` : ""
         }</div>${activityMapsButton(item)}${
+          !item.virtual && session.can(PERMISSIONS.TRIP_EDIT)
+            ? `<button class="btn btn-ghost icon-btn" type="button" data-clone-activity="${item.id}" aria-label="Duplicar actividad" title="Duplicar actividad">${
+              icon("file")
+            }</button>`
+            : ""
+        }${
           item.virtual ? badge("Sincronizado", "blue") : badge(item.status === "done" ? "Realizado" : display.kind)
         }</div></div>`;
       }).join("")
@@ -1429,16 +1865,53 @@ function renderItinerary() {
   }${
     analysis.warnings.map((warning) => `<div class="insight warning">${icon("alert")}<div>${esc(warning)}</div></div>`)
       .join("")
-  }</div></section><section class="card card-pad"><div class="card-head"><div><h3>Tiempo libre</h3><p>Huecos entre actividades</p></div></div><div class="item-list">${
+  }</div></section>${
+    routePairs.length && session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<section class="card card-pad"><div class="card-head"><div><h3>Desplazamientos</h3><p>Entre lugares con coordenadas</p></div></div><div class="item-list">${
+        routePairs.map((pair) => {
+          const estimate = ui.routeEstimates[routePairKey(pair)];
+          const available = timeDiff(pair.origin.end, pair.destination.start);
+          return `<div class="list-item"><span class="stat-icon">${
+            icon("map")
+          }</span><div class="list-item-main"><strong>${esc(pair.origin.title)} → ${
+            esc(pair.destination.title)
+          }</strong><small>${
+            estimate
+              ? `${durationLabel(Math.ceil(estimate.durationSeconds / 60))} · ${
+                (estimate.distanceMeters / 1000).toLocaleString("es-ES", { maximumFractionDigits: 1 })
+              } km${estimate.durationSeconds / 60 > available ? " · No cabe en el hueco" : ""}`
+              : "Pendiente de calcular"
+          }</small></div></div>`;
+        }).join("")
+      }</div></section>`
+      : ""
+  }<section class="card card-pad"><div class="card-head"><div><h3>Tiempo libre</h3><p>Huecos entre actividades</p></div></div><div class="item-list">${
     analysis.gaps.filter((g) => g.available >= 30).slice(0, 4).map((g) =>
       `<div class="list-item"><span class="stat-icon">${icon("clock")}</span><div class="list-item-main"><strong>${
         durationLabel(g.available)
       }</strong><small>Después de ${esc(g.first.title)}</small></div></div>`
     ).join("") || "<p style='color:var(--muted)'>No hay huecos de 30 minutos o más.</p>"
   }</div></section></aside></div>`;
-  return `<div class="toolbar itinerary-toolbar">${
-    addAction("itinerary", "Añadir actividad")
-  }</div><div class="day-strip" role="tablist" aria-label="Días del viaje">${
+  const reminders = store.collection("reminders").filter((item) =>
+    item.status !== "dismissed" && item.remindAt?.slice(0, 10) === date
+  );
+  return `<div class="toolbar itinerary-toolbar">${addAction("itinerary", "Añadir actividad")}${
+    routePairs.length
+      ? `<button class="btn btn-secondary" type="button" data-calculate-routes>${
+        icon("map")
+      } Calcular trayectos</button>`
+      : ""
+  }${
+    session.can(PERMISSIONS.TRIP_EDIT) && items.length
+      ? `<button class="btn btn-secondary" type="button" data-duplicate-day>${icon("file")} Duplicar día</button>`
+      : ""
+  }${
+    session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-secondary" type="button" data-add-reminder>${icon("clock")} Recordatorio</button>`
+      : ""
+  }<button class="btn btn-secondary" type="button" data-export-ics>${
+    icon("download")
+  } Calendario .ics</button></div><div class="day-strip" role="tablist" aria-label="Días del viaje">${
     dates.map((item) => {
       const parsed = new Date(`${item}T12:00`);
       const selected = item === date;
@@ -1452,13 +1925,21 @@ function renderItinerary() {
     }).join("")
   }</div><div class="section-title"><div><h2>${fullDate(date)}</h2><p>Día ${
     dates.indexOf(date) + 1
-  } de ${dates.length}</p></div></div>${body}`;
+  } de ${dates.length}</p></div></div>${
+    reminders.length
+      ? `<section class="card card-pad reminder-strip" aria-label="Recordatorios del día"><strong>Recordatorios</strong>${
+        reminders.map((item) =>
+          `<span>${icon("clock")} ${esc(item.title)} · ${esc(item.remindAt.slice(11, 16))}</span>`
+        ).join("")
+      }</section>`
+      : ""
+  }${body}`;
 }
 
 function renderPlaces() {
   const places = filtered(store.collection("places"), ["name", "city", "area", "category"]);
   const pendingPhotos = store.collection("places").filter((place) =>
-    !place.photoUrl && !place.photoCheckedAt && googleMapsPlaceLink(place.link)
+    googleMapsPlaceLink(place.link) && (!place.photoUrl || placeMetadataIsStale(place))
   );
   const photoAction = pendingPhotos.length && session.can(PERMISSIONS.TRIP_EDIT)
     ? `<button class="btn btn-secondary" type="button" data-complete-place-photos>${
@@ -1574,6 +2055,7 @@ function googlePlacePhoto(place) {
   if (!photoUrl) return {};
   return {
     photoUrl,
+    photoName: photo.name || "",
     photoAttributionName: attribution?.displayName || "Google Maps",
     photoAttributionUrl: attribution?.uri || place.googleMapsURI || "",
   };
@@ -1606,7 +2088,7 @@ function googleMapsPlaceLink(value) {
 
 async function completePlacePhotos(button) {
   const candidates = store.collection("places").filter((place) =>
-    !place.photoUrl && !place.photoCheckedAt && googleMapsPlaceLink(place.link)
+    googleMapsPlaceLink(place.link) && (!place.photoUrl || placeMetadataIsStale(place))
   );
   if (!candidates.length) return;
   button.disabled = true;
@@ -1617,7 +2099,10 @@ async function completePlacePhotos(button) {
     try {
       const { place } = await googlePlaceFromLink(candidate.link);
       const photo = googlePlacePhoto(place);
-      await store.edit("places", candidate.id, { ...photo, photoCheckedAt: new Date().toISOString() });
+      await store.edit("places", candidate.id, {
+        ...googlePlaceMetadata(place, photo),
+        photoCheckedAt: new Date().toISOString(),
+      });
       if (photo.photoUrl) completed++;
     } catch {
       failed++;
@@ -1787,7 +2272,7 @@ function initializePlaceLinkImport(root, item) {
         lat: place.location.lat(),
         lng: place.location.lng(),
         link: place.googleMapsURI || resolved,
-        ...photo,
+        ...googlePlaceMetadata(place, photo),
       };
       const backgroundMode = root.querySelector("#field-backgroundMode");
       if (backgroundMode && (!item?.backgroundMode || item.backgroundMode === PLACE_BACKGROUND_MODES.AUTO)) {
@@ -1998,7 +2483,7 @@ function initializeActivityLinks(root) {
         hours: place.regularOpeningHours?.weekdayDescriptions?.join(" · ") || "",
         lat: place.location.lat(),
         lng: place.location.lng(),
-        ...googlePlacePhoto(place),
+        ...googlePlaceMetadata(place, googlePlacePhoto(place)),
       };
       quickName.value = place.displayName || quickName.value;
       quickCity.value = googlePlaceCity(place) || quickCity.value;
@@ -2287,8 +2772,7 @@ async function initializeGoogleMap() {
           lat: place.location.lat(),
           lng: place.location.lng(),
           link: place.googleMapsURI || "",
-          googlePlaceId: place.id || "",
-          ...photo,
+          ...googlePlaceMetadata(place, photo),
         });
         ui.mapPlaceId = saved.id;
         toast("Lugar guardado en el viaje");
@@ -2361,16 +2845,180 @@ function filtered(items, keys) {
   );
 }
 function table(headers, rows, emptyTitle = "No hay datos") {
+  const labelledRows = rows.map((row) => {
+    let column = 0;
+    return row.replace(/<td([^>]*)>/g, (_match, attributes) => {
+      const label = headers[column++] || "Acciones";
+      return `<td${attributes} data-label="${esc(label)}">`;
+    });
+  });
   return `<section class="card"><div class="table-wrap"><table class="data-table"><thead><tr>${
     headers.map((h) => `<th>${esc(h)}</th>`).join("")
-  }<th></th></tr></thead><tbody>${rows.join("")}</tbody></table></div>${
+  }<th><span class="sr-only">Acciones</span></th></tr></thead><tbody>${labelledRows.join("")}</tbody></table></div>${
     rows.length ? "" : emptyState(emptyTitle, "Añade el primer elemento para empezar.")
   }</section>`;
 }
 function actions(collection, id) {
-  return `<div class="row-actions"><button class="btn btn-ghost icon-btn" data-edit="${collection}:${id}" aria-label="Editar">${
+  if (String(id).startsWith("offline_")) return `<span class="badge amber">Pendiente de sincronizar</span>`;
+  return `<div class="row-actions"><button class="btn btn-ghost icon-btn" data-comments="${collection}:${id}" aria-label="Comentarios" title="Comentarios">${
+    icon("message")
+  }</button><button class="btn btn-ghost icon-btn" data-edit="${collection}:${id}" aria-label="Editar">${
     icon("edit")
   }</button></div>`;
+}
+
+async function openComments(collection, id) {
+  const item = store.collection(collection).find((candidate) => candidate.id === id);
+  const title = item?.title || item?.name || item?.product || "Elemento";
+  let comments;
+  try {
+    comments = (await apiClient.get(
+      `/trips/${store.activeTrip.id}/comments?collection=${encodeURIComponent(collection)}&entityId=${
+        encodeURIComponent(id)
+      }`,
+    )).comments;
+  } catch (error) {
+    return toast(error.message, "error");
+  }
+  const canComment = session.can(PERMISSIONS.COMMENT_CREATE);
+  modal({
+    title: `Comentarios · ${title}`,
+    fields: canComment
+      ? [{
+        name: "body",
+        label: "Nuevo comentario",
+        type: "textarea",
+        required: true,
+        full: true,
+        help: "Usa @usuario para mencionar a otro viajero.",
+      }]
+      : [],
+    submitLabel: canComment ? "Comentar" : "Cerrar",
+    onSubmit: async (values) => {
+      if (!canComment) return;
+      await apiClient.post(`/trips/${store.activeTrip.id}/comments`, {
+        entityCollection: collection,
+        entityId: id,
+        body: values.body,
+      });
+      toast("Comentario publicado");
+    },
+    onReady: (root) => {
+      const list = document.createElement("div");
+      list.className = "comment-list full";
+      list.setAttribute("aria-label", "Conversación");
+      list.innerHTML = comments.length
+        ? comments.map((comment) =>
+          `<article class="comment"><div><strong>${esc(comment.user.name)}</strong><small>${
+            new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(
+              new Date(comment.createdAt),
+            )
+          }</small></div><p>${esc(comment.body)}</p></article>`
+        ).join("")
+        : `<p class="cell-sub">Aún no hay comentarios.</p>`;
+      root.querySelector(".form-grid")?.prepend(list);
+    },
+  });
+}
+
+function exportCalendar() {
+  const url = URL.createObjectURL(new Blob([exportTripIcs(store.getState())], { type: "text/calendar;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${
+    store.activeTrip.name.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").toLocaleLowerCase() || "tabi"
+  }.ics`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  toast("Calendario exportado");
+}
+
+function createReminder() {
+  modal({
+    title: "Nuevo recordatorio",
+    fields: [
+      { name: "title", label: "Qué quieres recordar", required: true, full: true },
+      { name: "remindAt", label: "Fecha y hora", type: "datetime-local", required: true, full: true },
+    ],
+    values: { remindAt: `${activeDate()}T09:00` },
+    submitLabel: "Guardar recordatorio",
+    onSubmit: async (values) => {
+      await store.add("reminders", { ...values, timeZone: store.activeTrip.timeZone || "UTC", status: "pending" });
+      if ("Notification" in globalThis && Notification.permission === "default") await Notification.requestPermission();
+      toast("Recordatorio guardado");
+      render();
+    },
+  });
+}
+
+function duplicateDayDialog() {
+  const sourceDate = activeDate();
+  modal({
+    title: "Duplicar día completo",
+    fields: [{ name: "targetDate", label: "Copiar actividades al día", type: "date", required: true, full: true }],
+    values: { targetDate: addDaysIso(sourceDate, 1) },
+    submitLabel: "Duplicar día",
+    onSubmit: async ({ targetDate }) => {
+      await apiClient.post(`/trips/${store.activeTrip.id}/duplicate-day`, { sourceDate, targetDate });
+      const payload = await store.loadTrip(store.activeTrip.id, handleRemoteChange);
+      session.selectTrip(payload);
+      ui.selectedDate = targetDate;
+      toast("Día duplicado");
+      render();
+    },
+  });
+}
+
+function duplicateActivityDialog(id) {
+  const source = store.collection("activities").find((item) => item.id === id);
+  if (!source) return;
+  modal({
+    title: "Duplicar actividad",
+    fields: [
+      { name: "title", label: "Título", required: true, full: true },
+      { name: "date", label: "Fecha", type: "date", required: true },
+      { name: "start", label: "Empieza", type: "time", required: true },
+      { name: "end", label: "Termina", type: "time", required: true },
+    ],
+    values: { title: source.title, date: source.date, start: source.start, end: source.end },
+    submitLabel: "Crear copia",
+    onSubmit: async (values) => {
+      const metadata = new Set([
+        "id",
+        "tripId",
+        "version",
+        "createdAt",
+        "updatedAt",
+        "createdBy",
+        "updatedBy",
+        "startsAt",
+        "endsAt",
+      ]);
+      const copy = Object.fromEntries(Object.entries(source).filter(([key]) => !metadata.has(key)));
+      await store.add("activities", { ...copy, ...values, status: "planned" });
+      ui.selectedDate = values.date;
+      toast("Actividad duplicada");
+      render();
+    },
+  });
+}
+
+function notifyDueReminders() {
+  if (!("Notification" in globalThis) || Notification.permission !== "granted") return;
+  const notified = new Set(JSON.parse(localStorage.getItem("tabi-notified-reminders") || "[]"));
+  for (const item of store.collection("reminders")) {
+    if (
+      item.status === "dismissed" || notified.has(item.id) ||
+      Date.parse(item.remindInstant || item.remindAt) > Date.now()
+    ) {
+      continue;
+    }
+    new Notification(item.title, { body: `Recordatorio de ${store.activeTrip.name}`, icon: "/assets/icon.svg" });
+    notified.add(item.id);
+  }
+  localStorage.setItem("tabi-notified-reminders", JSON.stringify([...notified].slice(-200)));
 }
 function copyReferenceButton(collection, item, field = "reference") {
   return item[field]
@@ -2508,10 +3156,22 @@ function renderBudget() {
     funds = store.collection("funds"),
     stays = normalizedStays(),
     transports = normalizedTransports(),
-    summary = budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays, transports),
+    summary = store.collection("financialTransactions").length
+      ? canonicalSummary()
+      : budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays, transports),
     percent = Math.min(100, summary.spent / Math.max(1, summary.budget) * 100),
-    totals = groupTotals(budgetChartItems(expenses, purchases, stays, transports), "category"),
+    totals = store.collection("financialTransactions").length
+      ? groupTotals(
+        canonicalChartItems(),
+        "category",
+      )
+      : groupTotals(budgetChartItems(expenses, purchases, stays, transports), "category"),
     max = Math.max(...totals.map(([, v]) => v), 1);
+  const balances = store.collection("settlementBalances").map((balance) => ({
+    ...balance,
+    primaryAmount: canonicalMoneyToPrimary(balance),
+  })).filter((balance) => Math.abs(balance.primaryAmount) > 0.000001);
+  const transfers = store.collection("settlementTransfers");
   const expenseItems = store.collection("expenses").map((expense) => ({
     ...expense,
     sourceCollection: "expenses",
@@ -2535,7 +3195,7 @@ function renderBudget() {
     };
   });
   const items = filtered(
-    [...expenseItems, ...transportItems],
+    store.collection("financialTransactions").length ? canonicalMovementItems() : [...expenseItems, ...transportItems],
     ["title", "category", "city", "paidByName"],
   );
   return `<div class="grid dashboard-grid"><div class="section-stack"><section class="card card-pad budget-hero"><div><span class="hero-eyebrow" style="color:var(--muted)">Fondos disponibles</span><div class="stat-value" style="font-size:36px">${
@@ -2580,7 +3240,31 @@ function renderBudget() {
         primaryMoney(v)
       }"></div><span class="chart-label">${esc(l)}</span></div>`
     ).join("")
-  }</div></section></div><div class="section-title"><div><h2>Fondos del viaje</h2><p>Aportaciones que aumentan el presupuesto disponible</p></div>${
+  }</div></section></div>${
+    balances.length
+      ? `<section class="card card-pad"><div class="card-head"><div><h2>Saldos entre viajeros</h2><p>Calculados a partir de los gastos repartidos</p></div></div><div class="item-list">${
+        balances.map((balance) =>
+          `<div class="list-item"><div class="list-item-main"><strong>${
+            esc(memberName(balance.memberUserId, "Viajero"))
+          }</strong><small>${balance.primaryAmount > 0 ? "Debe recibir" : "Debe aportar"}</small></div>${
+            money(Math.abs(balance.primaryAmount))
+          }</div>`
+        ).join("")
+      }</div>${
+        transfers.length
+          ? `<div class="section-title compact"><div><h3>Transferencias sugeridas</h3><p>Liquidan los saldos con pocas operaciones</p></div></div><div class="item-list">${
+            transfers.map((transfer) =>
+              `<div class="list-item"><div class="list-item-main"><strong>${
+                esc(memberName(transfer.fromUserId, "Viajero"))
+              } → ${esc(memberName(transfer.toUserId, "Viajero"))}</strong><small>Liquidación sugerida</small></div>${
+                primaryMoney(moneyToNumber(transfer.amount), transfer.amount.currency)
+              }</div>`
+            ).join("")
+          }</div>`
+          : ""
+      }</section>`
+      : ""
+  }<div class="section-title"><div><h2>Fondos del viaje</h2><p>Aportaciones que aumentan el presupuesto disponible</p></div>${
     session.can(PERMISSIONS.BUDGET_EDIT)
       ? `<button class="btn btn-primary" data-add-fund>${icon("plus")} Añadir fondos</button>`
       : ""
@@ -2737,11 +3421,11 @@ function renderReservations() {
     table(
       ["Reserva", "Fecha y hora", "Referencia", "Importe", "Pago", "Estado", "Enlace"],
       items.map((i) =>
-        `<tr><td><span class="cell-main">${esc(i.title)}</span><span class="cell-sub">${
-          esc(visualLabel(i.type))
-        }</span></td><td>${formatDate(i.date)} · ${esc(i.time || "—")}</td><td>${esc(i.reference || "—")}${
-          copyReferenceButton("reservations", i)
-        }</td><td>${itemMoney(i.price, i)}${
+        `<tr><td><span class="cell-main">${esc(i.title)}</span><span class="cell-sub">${esc(visualLabel(i.type))}${
+          reservationLinkLabel(i) ? ` · ${esc(reservationLinkLabel(i))}` : ""
+        }${i.budgetMode === "reference" ? " · Solo referencia" : ""}</span></td><td>${formatDate(i.date)} · ${
+          esc(i.time || "—")
+        }</td><td>${esc(i.reference || "—")}${copyReferenceButton("reservations", i)}</td><td>${itemMoney(i.price, i)}${
           Number(i.paidAmount || 0) > 0
             ? `<span class="cell-sub">Pagado ${primaryMoney(i.paidAmount, itemCurrency(i))}</span>`
             : ""
@@ -2756,6 +3440,13 @@ function renderReservations() {
       "No hay reservas",
     )
   }`;
+}
+
+function reservationLinkLabel(reservation) {
+  if (!reservation.linkedCollection || !reservation.linkedEntityId) return "";
+  const linked = store.collection(reservation.linkedCollection).find(({ id }) => id === reservation.linkedEntityId);
+  if (!linked) return "Vínculo no disponible";
+  return `Vinculada a ${linked.title || linked.name || `${linked.origin || ""} → ${linked.destination || ""}`}`;
 }
 function renderInspiration() {
   const enriched = store.collection("inspirations").map((item) => ({
@@ -2831,6 +3522,7 @@ function renderSettings() {
   const updatedAt = rateMeta.fetchedAt
     ? new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" }).format(new Date(rateMeta.fetchedAt))
     : "Sin actualización automática";
+  const pwa = ui.pwaDiagnostics || {};
   return `<div class="section-stack">
     <div class="grid dashboard-grid"><div class="section-stack">
       <section class="card card-pad"><div class="card-head"><div><h2>Viaje activo</h2><p>Configuración compartida con el equipo</p></div>${
@@ -2923,11 +3615,36 @@ function renderSettings() {
   }</option><option value="dark" ${s.theme === "dark" ? "selected" : ""}>${
     visualLabel("Oscuro")
   }</option></select></div><div class="field"><label>Inicio</label><input type="time" name="dayStart" value="${s.dayStart}"></div><div class="field"><label>Fin</label><input type="time" name="dayEnd" value="${s.dayEnd}"></div><div class="field full"><button class="btn btn-primary" type="submit">Guardar</button></div></form></section>
+      <section class="card card-pad"><div class="card-head"><div><h2>Aplicación y modo offline</h2><p>Estado de instalación, caché y sincronización</p></div>${
+    badge(pwa.online === false ? "Sin conexión" : "Sincronizado", pwa.online === false ? "amber" : "green")
+  }</div><div class="pwa-diagnostics"><span>Instalada<strong>${
+    pwa.standalone ? "Sí" : "No"
+  }</strong></span><span>Service worker<strong>${
+    pwa.serviceWorker ? "Activo" : "No activo"
+  }</strong></span><span>Viajes disponibles offline<strong>${
+    pwa.cachedTrips ?? "—"
+  }</strong></span><span>Cambios pendientes<strong>${
+    pwa.queuedChanges ?? "—"
+  }</strong></span><span>Almacenamiento usado<strong>${
+    formatBytes(pwa.usageBytes)
+  }</strong></span><span>Última copia<strong>${
+    pwa.cachedAt ? relativeTime(pwa.cachedAt) : "Sin copia"
+  }</strong></span></div><div class="section-stack">${
+    pwaManager.installPrompt
+      ? `<button class="btn btn-primary" type="button" data-install-pwa>${icon("download")} Instalar Tabi</button>`
+      : ""
+  }${
+    pwaManager.updateAvailable
+      ? `<button class="btn btn-primary" type="button" data-update-pwa>${icon("sync")} Aplicar actualización</button>`
+      : ""
+  }<button class="btn btn-secondary" type="button" data-refresh-pwa>${
+    icon("sync")
+  } Actualizar diagnóstico</button><button class="btn btn-ghost" type="button" data-clear-offline>Eliminar copias offline de este dispositivo</button></div></section>
       <section class="card card-pad"><div class="card-head"><div><h2>Tu cuenta</h2><p>${
     esc(session.currentUser.email)
   }</p></div>${
     avatar(session.currentUser)
-  }</div><div class="section-stack"><button class="btn btn-secondary" data-password>Cambiar contraseña</button><button class="btn btn-secondary" data-trip-list>Volver a mis viajes</button><button class="btn btn-danger" data-logout>Cerrar sesión</button></div></section>${
+  }</div><div class="section-stack"><button class="btn btn-secondary" data-password>Cambiar contraseña</button><button class="btn btn-secondary" data-recovery-codes>Generar códigos de recuperación</button><button class="btn btn-secondary" data-revoke-sessions>Cerrar sesiones en otros dispositivos</button><button class="btn btn-secondary" data-trip-list>Volver a mis viajes</button><button class="btn btn-danger" data-logout>Cerrar sesión</button></div></section>${
     session.can(PERMISSIONS.TRIP_DELETE)
       ? `<button class="btn btn-danger" data-delete-trip>Eliminar viaje definitivamente</button>`
       : ""
@@ -3026,9 +3743,20 @@ function openEditor(collection, idValue) {
   }[collection];
   if (!config) return;
   const item = idValue ? store.collection(collection).find((i) => i.id === idValue) : null;
+  if (item?.offlinePending) {
+    toast("Este borrador se podrá editar después de sincronizarse.", "error");
+    return;
+  }
   const [type, label] = config;
   const defaults = {
-    activity: { activityKind: "General", date: activeDate(), start: "09:00", end: "10:00", status: "planned" },
+    activity: {
+      activityKind: "General",
+      date: activeDate(),
+      start: "09:00",
+      end: "10:00",
+      status: "planned",
+      timeZone: store.activeTrip.timeZone || "UTC",
+    },
     place: {
       status: "Pendiente",
       priority: "Media",
@@ -3062,6 +3790,7 @@ function openEditor(collection, idValue) {
       paymentStatus: "Pendiente",
       luggageStorage: "Por confirmar",
       currency: store.activeTrip.currency,
+      timeZone: store.activeTrip.timeZone || "UTC",
     },
     transport: {
       departureDate: activeDate(),
@@ -3069,24 +3798,51 @@ function openEditor(collection, idValue) {
       status: "Por reservar",
       paymentStatus: "Pendiente",
       currency: store.activeTrip.currency,
+      departureTimeZone: store.activeTrip.timeZone || "UTC",
+      arrivalTimeZone: store.activeTrip.timeZone || "UTC",
     },
     reservation: {
       date: activeDate(),
       status: "Pendiente",
       paymentStatus: "Pendiente",
       currency: store.activeTrip.currency,
+      budgetMode: "included",
+      timeZone: store.activeTrip.timeZone || "UTC",
     },
     inspiration: {},
   }[type] || {};
-  const editorValues = item && type === "activity" && !item.activityKind
+  let editorValues = item && type === "activity" && !item.activityKind
     ? { ...item, activityKind: activityKindOf(item) }
     : item || defaults;
+  if (type === "activity" && !editorValues.timeZone) {
+    editorValues = { ...editorValues, timeZone: store.activeTrip.timeZone || "UTC" };
+  }
+  if (type === "reservation" && editorValues.linkedCollection && editorValues.linkedEntityId) {
+    editorValues = { ...editorValues, linkedEntity: `${editorValues.linkedCollection}:${editorValues.linkedEntityId}` };
+  }
+  if (type === "expense") {
+    editorValues = {
+      ...editorValues,
+      splitMemberIds: (editorValues.splits || []).map((split) => split.memberUserId).filter(Boolean),
+    };
+  }
   modal({
     title: item ? `Editar ${label.toLowerCase()}` : `Nuevo ${label.toLowerCase()}`,
     fields: resolvedFields(type, editorValues),
     values: editorValues,
     dangerLabel: item ? "Eliminar" : "",
     onSubmit: async (values) => {
+      if (type === "reservation") {
+        const [linkedCollection = "", linkedEntityId = ""] = String(values.linkedEntity || "").split(":");
+        values.linkedCollection = linkedCollection;
+        values.linkedEntityId = linkedEntityId;
+        if (linkedEntityId && ["stays", "transports"].includes(linkedCollection)) values.budgetMode = "reference";
+        delete values.linkedEntity;
+      }
+      if (type === "expense") {
+        values.splits = (values.splitMemberIds || []).map((memberUserId) => ({ memberUserId, weight: 1 }));
+        delete values.splitMemberIds;
+      }
       if (type === "purchase" && Number(values.actualPrice || 0) > 0) {
         values.status = "Comprado";
         values.purchaseDate ||= todayIso();
@@ -3127,8 +3883,7 @@ function openEditor(collection, idValue) {
       }
       if (
         type === "transport" && values.arrivalDate &&
-        (`${values.arrivalDate}T${values.arrivalTime || "23:59"}` <
-          `${values.departureDate}T${values.departureTime || "00:00"}`)
+        values.arrivalDate < values.departureDate
       ) {
         throw new Error("La llegada del transporte no puede ser anterior a la salida.");
       }
@@ -3205,6 +3960,21 @@ function bindCommon() {
     store.update((s) => s.settings.theme = current === "dark" ? "light" : "dark");
     render();
   });
+  app.querySelectorAll("[data-install-pwa]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      const installed = await pwaManager.install();
+      toast(installed ? "Tabi se está instalando" : "Instalación cancelada", installed ? "success" : "error");
+      await refreshPwaDiagnostics();
+      render();
+    })
+  );
+  app.querySelectorAll("[data-update-pwa]").forEach((button) =>
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      pwaManager.applyUpdate();
+    })
+  );
   app.querySelectorAll("[data-search]").forEach((input) =>
     input.addEventListener("input", () => {
       ui.query = input.value;
@@ -3228,6 +3998,12 @@ function bindCommon() {
     button.addEventListener("click", () => {
       const [collection, id] = button.dataset.edit.split(":");
       openEditor(collection, id);
+    })
+  );
+  app.querySelectorAll("[data-comments]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const [collection, id] = button.dataset.comments.split(":");
+      openComments(collection, id);
     })
   );
   app.querySelectorAll("[data-add]").forEach((button) =>
@@ -3259,6 +4035,19 @@ function bindCommon() {
 }
 
 function bindRoute() {
+  app.querySelector("[data-export-ics]")?.addEventListener("click", exportCalendar);
+  app.querySelector("[data-add-reminder]")?.addEventListener("click", createReminder);
+  app.querySelector("[data-duplicate-day]")?.addEventListener("click", duplicateDayDialog);
+  app.querySelectorAll("[data-clone-activity]").forEach((button) =>
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      duplicateActivityDialog(button.dataset.cloneActivity);
+    })
+  );
+  app.querySelector("[data-calculate-routes]")?.addEventListener(
+    "click",
+    (event) => calculateItineraryRoutes(event.currentTarget),
+  );
   app.querySelectorAll("[data-go-date]").forEach((button) =>
     button.addEventListener("click", () => {
       ui.selectedDate = button.dataset.goDate;
@@ -3266,12 +4055,25 @@ function bindRoute() {
       location.hash = "itinerary";
     })
   );
-  app.querySelectorAll("[data-date]").forEach((button) =>
+  app.querySelectorAll("[data-date]").forEach((button) => {
     button.addEventListener("click", () => {
       ui.selectedDate = button.dataset.date;
       render();
-    })
-  );
+    });
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const buttons = [...app.querySelectorAll("[data-date]")];
+      const current = buttons.indexOf(button);
+      const target = event.key === "Home"
+        ? 0
+        : event.key === "End"
+        ? buttons.length - 1
+        : Math.max(0, Math.min(buttons.length - 1, current + (event.key === "ArrowRight" ? 1 : -1)));
+      buttons[target]?.click();
+      requestAnimationFrame(() => app.querySelector(`[data-date="${buttons[target]?.dataset.date}"]`)?.focus());
+    });
+  });
   const dayStrip = app.querySelector(".day-strip");
   const activeDay = dayStrip?.querySelector(".day-button.active");
   if (dayStrip && activeDay) {
@@ -3386,6 +4188,7 @@ function bindRoute() {
     button.addEventListener("click", async () => {
       if (!session.can(PERMISSIONS.TRIP_EDIT)) return toast("No tienes permiso para modificar tareas.", "error");
       const task = store.collection("tasks").find((i) => i.id === button.dataset.toggleTask);
+      if (task?.offlinePending) return toast("La tarea se actualizará cuando termine de sincronizarse.", "error");
       try {
         await store.edit("tasks", task.id, { status: task.status === "Completada" ? "Pendiente" : "Completada" });
         render();
@@ -3428,6 +4231,18 @@ function bindRoute() {
     const values = Object.fromEntries(new FormData(event.currentTarget));
     store.update((s) => Object.assign(s.settings, values));
     toast("Preferencias guardadas");
+    render();
+  });
+  app.querySelector("[data-refresh-pwa]")?.addEventListener("click", async () => {
+    await refreshPwaDiagnostics();
+    render();
+  });
+  app.querySelector("[data-clear-offline]")?.addEventListener("click", async () => {
+    if (!confirm("¿Eliminar las copias offline y los cambios locales pendientes de este dispositivo?")) return;
+    await store.clearOfflineData();
+    navigator.serviceWorker?.controller?.postMessage({ type: "CLEAR_PRIVATE_CACHE" });
+    await refreshPwaDiagnostics();
+    toast("Copias offline eliminadas");
     render();
   });
   const rateMode = app.querySelector("[data-rate-mode]");
@@ -3525,6 +4340,12 @@ function bindRoute() {
     button.addEventListener("click", () => copyInvitation(button.dataset.copyInvite))
   );
   app.querySelector("[data-password]")?.addEventListener("click", changePasswordDialog);
+  app.querySelector("[data-recovery-codes]")?.addEventListener("click", generateRecoveryCodesDialog);
+  app.querySelector("[data-revoke-sessions]")?.addEventListener("click", async () => {
+    if (!confirm("¿Cerrar todas las demás sesiones de tu cuenta?")) return;
+    await apiClient.post("/auth/sessions/revoke-others");
+    toast("Se han cerrado las demás sesiones");
+  });
   app.querySelector("[data-delete-trip]")?.addEventListener("click", deleteTrip);
   app.querySelector("[data-logout]")?.addEventListener("click", performLogout);
 }
@@ -3606,6 +4427,13 @@ function editTrip() {
       { name: "startDate", label: "Inicio", type: "date", required: true },
       { name: "endDate", label: "Fin", type: "date", required: true },
       { name: "travelers", label: "Viajeros", type: "number", min: 1 },
+      {
+        name: "timeZone",
+        label: "Zona horaria principal",
+        type: "select",
+        options: timeZoneOptions(trip.timeZone),
+        full: true,
+      },
       { name: "budget", label: `Presupuesto original (${trip.budgetCurrency})`, type: "number", min: 0 },
     ],
     values: trip,
@@ -3660,7 +4488,7 @@ async function importProject(file) {
   } catch {
     return toast("El archivo no contiene un JSON válido.", "error");
   }
-  if (archive?.format !== "tabi-trip" || archive?.schemaVersion !== 1 || !archive.collections) {
+  if (archive?.format !== "tabi-trip" || ![1, 2, 3].includes(archive?.schemaVersion) || !archive.collections) {
     return toast("Selecciona un proyecto Tabi compatible.", "error");
   }
   const entityCount = Object.values(archive.collections).reduce(
@@ -3782,7 +4610,7 @@ function changePasswordDialog() {
       type: "password",
       required: true,
       full: true,
-      help: "Mínimo 6 caracteres.",
+      help: "Mínimo 10 caracteres.",
     }],
     submitLabel: "Actualizar contraseña",
     onSubmit: async (values) => {
@@ -3790,6 +4618,56 @@ function changePasswordDialog() {
       toast("Contraseña actualizada. Las otras sesiones se han cerrado.");
     },
   });
+}
+
+function recoveryDialog() {
+  modal({
+    title: "Recuperar cuenta",
+    fields: [
+      { name: "identifier", label: "Usuario o email", required: true, full: true },
+      { name: "recoveryCode", label: "Código de recuperación", required: true, full: true },
+      {
+        name: "newPassword",
+        label: "Nueva contraseña",
+        type: "password",
+        required: true,
+        full: true,
+        help: "Mínimo 10 caracteres. El código solo puede utilizarse una vez.",
+      },
+    ],
+    submitLabel: "Restablecer contraseña",
+    onSubmit: async (values) => {
+      await apiClient.post("/auth/recover", values);
+      toast("Contraseña actualizada. Ya puedes iniciar sesión.");
+    },
+  });
+}
+
+async function generateRecoveryCodesDialog() {
+  if (!confirm("Los códigos anteriores dejarán de funcionar. ¿Generar códigos nuevos?")) return;
+  try {
+    const result = await apiClient.post("/auth/recovery-codes");
+    modal({
+      title: "Guarda tus códigos de recuperación",
+      fields: [{
+        name: "codes",
+        label: "Códigos de un solo uso",
+        type: "textarea",
+        value: result.codes.join("\n"),
+        help: "Guárdalos fuera de Tabi. No volverán a mostrarse y caducan en un año.",
+        full: true,
+      }],
+      submitLabel: "Ya los he guardado",
+      onSubmit: async () => {},
+      onReady: (root) => {
+        const codes = root.querySelector("textarea[name=codes]");
+        codes.readOnly = true;
+        codes.select();
+      },
+    });
+  } catch (error) {
+    toast(error.message, "error");
+  }
 }
 
 async function importLegacy() {
@@ -3825,12 +4703,25 @@ globalThis.addEventListener("hashchange", () => {
   if (session.currentTrip) render();
 });
 store.subscribe(() => applyTheme());
+pwaManager.addEventListener("change", async () => {
+  await refreshPwaDiagnostics();
+  if (session.loading) return;
+  if (session.currentTrip) render();
+  else if (session.currentUser) renderTripsDashboard();
+});
+for (const eventName of ["online", "offline"]) {
+  globalThis.addEventListener(eventName, async () => {
+    await refreshPwaDiagnostics();
+    if (session.currentTrip) render();
+  });
+}
+const pwaInitialization = pwaManager.initialize().catch(() => {});
 applyTheme();
 await start();
-if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then((registration) => registration.update())
-    .catch(() => {});
-}
+await pwaInitialization;
+await refreshPwaDiagnostics();
+if (session.currentTrip) render();
+else if (session.currentUser) renderTripsDashboard();
 
 async function start() {
   renderLoading();
@@ -3838,6 +4729,11 @@ async function start() {
   if (inviteTokenFromPath()) return renderInvitation();
   if (shareTargetFromPath()) return renderShareTarget();
   if (!session.currentUser) return renderAuth();
+  const shortcutRoute = location.hash.slice(1);
+  const lastTripId = localStorage.getItem(LAST_TRIP_KEY);
+  if (shortcutRoute && shortcutRoute !== "dashboard" && session.trips.some((trip) => trip.id === lastTripId)) {
+    return await enterTrip(lastTripId, shortcutRoute);
+  }
   renderTripsDashboard();
 }
 

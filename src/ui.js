@@ -49,6 +49,7 @@ const paths = {
   play: '<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4V8Z"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   close: '<path d="M18 6 6 18M6 6l12 12"/>',
+  message: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/>',
 };
 
 export const icon = (name, className = "icon") =>
@@ -193,6 +194,7 @@ export function modal({
   onReady,
 }) {
   const root = document.querySelector("#modal-root");
+  const previouslyFocused = document.activeElement;
   const fieldHtml = fields.map((field) => {
     const value = values[field.name] ?? field.value ?? "";
     const required = field.required ? "required" : "";
@@ -211,6 +213,19 @@ export function modal({
       control = `<select id="field-${field.name}" name="${field.name}" ${required}>${
         field.empty ? `<option value="">${esc(field.empty)}</option>` : ""
       }${options}</select>`;
+    }
+    if (field.type === "checkbox-group") {
+      const selected = new Set(Array.isArray(value) ? value.map(String) : []);
+      control = `<fieldset class="checkbox-group" id="field-${field.name}"><legend class="sr-only">${
+        esc(field.label)
+      }</legend>${
+        (field.options || []).map((option) => {
+          const item = typeof option === "string" ? { value: option, label: option } : option;
+          return `<label><input type="checkbox" name="${esc(field.name)}" value="${esc(item.value)}" ${
+            selected.has(String(item.value)) ? "checked" : ""
+          }> <span>${esc(item.label)}</span></label>`;
+        }).join("")
+      }</fieldset>`;
     }
     if (field.type === "autocomplete") {
       control =
@@ -272,7 +287,7 @@ export function modal({
           value ? "" : "hidden"
         }>Quitar</button></div></div>`;
     }
-    return `<div class="field ${field.full ? "full" : ""}" data-field="${
+    return `<div class="field ${field.full ? "full" : ""} ${field.advanced ? "field-advanced" : ""}" data-field="${
       esc(field.name)
     }"><label for="field-${field.name}">${esc(field.label)}${field.required ? " *" : ""}</label>${control}${
       field.help ? `<span class="field-help">${esc(field.help)}</span>` : ""
@@ -298,11 +313,29 @@ export function modal({
     ) return;
     root.innerHTML = "";
     document.removeEventListener("keydown", keyHandler);
+    previouslyFocused?.focus?.();
   };
   const keyHandler = (event) => {
     if (event.key === "Escape") close();
+    if (event.key === "Tab") {
+      const focusable = [
+        ...root.querySelectorAll(
+          "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex='-1'])",
+        ),
+      ].filter((item) => !item.hidden && item.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
   };
   document.addEventListener("keydown", keyHandler);
+  requestAnimationFrame(() => root.querySelector("input:not([type=hidden]), select, textarea, button")?.focus());
   root.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => close()));
   root.querySelector(".modal-backdrop").addEventListener("click", (event) => {
     if (event.target.classList.contains("modal-backdrop")) close();
@@ -450,7 +483,11 @@ export function modal({
     event.preventDefault();
     const submit = event.currentTarget.querySelector('[type="submit"]');
     submit.disabled = true;
-    const output = Object.fromEntries(new FormData(event.currentTarget));
+    const formData = new FormData(event.currentTarget);
+    const output = Object.fromEntries(formData);
+    fields.filter((field) => field.type === "checkbox-group").forEach((field) => {
+      output[field.name] = formData.getAll(field.name);
+    });
     fields.filter((field) => field.type === "number").forEach((field) => {
       output[field.name] = Number(output[field.name] || 0);
     });

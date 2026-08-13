@@ -14,6 +14,7 @@ export const CONFIG = Object.freeze({
   publicOrigin: configuredPublicOrigin ? new URL(configuredPublicOrigin).origin : "",
   googleMapsApiKey: Deno.env.get("TABI_GOOGLE_MAPS_API_KEY")?.trim() || "",
   googleMapsMapId: Deno.env.get("TABI_GOOGLE_MAPS_MAP_ID")?.trim() || "",
+  metricsToken: Deno.env.get("TABI_METRICS_TOKEN")?.trim() || "",
   commitSha: APPLICATION_COMMIT,
   sessionCookie: "tabi_session",
   sessionDays: 30,
@@ -35,4 +36,5 @@ export const ENTITY_TABLES = Object.freeze({
   reservations: "reservations",
   inspirations: "inspirations",
   notes: "notes",
+  reminders: "reminders",
 });

@@ -1,4 +1,5 @@
-const CACHE = "tabi-v13";
+const CACHE = "tabi-v16";
+const PRIVATE_CACHE = "tabi-private-v1";
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,6 +12,17 @@ const ASSETS = [
   "./src/data.js",
   "./src/countries.js",
   "./src/currency.js",
+  "./src/money.js",
+  "./src/contracts.js",
+  "./src/finance.js",
+  "./src/navigation.js",
+  "./src/time.js",
+  "./src/calendar.js",
+  "./src/places.js",
+  "./src/templates.js",
+  "./src/trip-phase.js",
+  "./src/pwa.js",
+  "./src/offline-cache.js",
   "./src/domain.js",
   "./src/emojis.js",
   "./src/lightbox.js",
@@ -22,19 +34,30 @@ const ASSETS = [
 ];
 self.addEventListener(
   "install",
-  (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())),
+  (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS))),
 );
 self.addEventListener(
   "activate",
   (event) =>
     event.waitUntil(
-      caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      caches.keys().then((keys) =>
+        Promise.all(keys.filter((key) => ![CACHE, PRIVATE_CACHE].includes(key)).map((key) => caches.delete(key)))
+      )
         .then(() => self.clients.claim()),
     ),
 );
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const pathname = new URL(event.request.url).pathname;
+  if (pathname.startsWith("/api/media/")) {
+    event.respondWith(
+      fetch(event.request).then((response) => {
+        if (response.ok) caches.open(PRIVATE_CACHE).then((cache) => cache.put(event.request, response.clone()));
+        return response;
+      }).catch(() => caches.match(event.request)),
+    );
+    return;
+  }
   if (pathname.startsWith("/api/") || pathname.startsWith("/invite/")) return;
   event.respondWith(
     fetch(event.request).then((response) => {
@@ -43,4 +66,8 @@ self.addEventListener("fetch", (event) => {
       return response;
     }).catch(() => caches.match(event.request).then((match) => match || caches.match("./index.html"))),
   );
+});
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "CLEAR_PRIVATE_CACHE") event.waitUntil(caches.delete(PRIVATE_CACHE));
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
