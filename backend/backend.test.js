@@ -10,12 +10,18 @@ const { api } = await import("./api.js");
 const { handleError } = await import("./http.js");
 const { db } = await import("./database.js");
 const { googleMapsUrl, resolveGoogleMapsUrl } = await import("./google-maps.js");
+const { getExchangeRate } = await import("./exchange-rates.js");
 
 function assert(condition, message = "Assertion failed") {
   if (!condition) throw new Error(message);
 }
 function assertEquals(actual, expected, message = "") {
   if (actual !== expected) throw new Error(message || `Esperado ${expected}; recibido ${actual}`);
+}
+function assertAlmostEquals(actual, expected, tolerance, message = "") {
+  if (Math.abs(actual - expected) > tolerance) {
+    throw new Error(message || `Esperado ${expected} ± ${tolerance}; recibido ${actual}`);
+  }
 }
 
 Deno.test("valida y resuelve enlaces cortos de Google Maps sin aceptar redirecciones externas", async () => {
@@ -71,6 +77,24 @@ Deno.test("publica la versión de la aplicación sin requerir sesión", async ()
   assertEquals(version.data.shortCommit, testCommit.slice(0, 8));
 });
 
+Deno.test("cachea tipos de cambio y conserva el último valor si el proveedor falla", async () => {
+  const fresh = await getExchangeRate("USD", "EUR", {
+    force: true,
+    fetcher: () => Promise.resolve(Response.json({ date: "2026-08-13", base: "USD", quote: "EUR", rate: 0.91 })),
+  });
+  assertEquals(fresh.rate, 0.91);
+  assertEquals(fresh.provider, "frankfurter");
+  db.prepare("UPDATE exchange_rates SET fetched_at=? WHERE base_currency='USD' AND quote_currency='EUR'").run(
+    "2026-01-01T00:00:00.000Z",
+  );
+  const fallback = await getExchangeRate("USD", "EUR", {
+    force: true,
+    fetcher: () => Promise.reject(new Error("sin conexión")),
+  });
+  assertEquals(fallback.rate, 0.91);
+  assertEquals(fallback.stale, true);
+});
+
 Deno.test({
   name: "flujo colaborativo aplica autenticación, capacidades, invitaciones y locking",
   sanitizeResources: false,
@@ -116,8 +140,10 @@ Deno.test({
       travelers: 2,
       budget: 600000,
       currency: "JPY",
+      exchangeRate: 0.0061,
     }, owner.cookie);
     assertEquals(created.status, 201);
+    assertEquals(created.data.trip.exchangeRate, 0.0061);
     const tripId = created.data.trip.id;
     const place = await call(
       "POST",
@@ -231,6 +257,17 @@ Deno.test({
       amount: 100000,
     }, owner.cookie);
     assertEquals(fund.status, 201);
+    assertEquals(fund.data.item.exchangeRateSnapshot, 1);
+    const euroExpense = await call("POST", `/api/trips/${tripId}/expenses`, {
+      title: "Seguro",
+      currency: "EUR",
+      actualAmount: 61,
+      paymentStatus: "Pagado",
+    }, owner.cookie);
+    assertEquals(euroExpense.status, 201);
+    assertEquals(euroExpense.data.item.exchangeRateBase, "EUR");
+    assertEquals(euroExpense.data.item.exchangeRateQuote, "JPY");
+    assertAlmostEquals(euroExpense.data.item.exchangeRateSnapshot, 1 / 0.0061, 0.0001);
 
     const invitation = await call("POST", `/api/trips/${tripId}/invitations`, {
       role: "viewer",
@@ -383,6 +420,34 @@ Deno.test({
     }, owner.cookie);
     assertEquals(staleUpdate.status, 409);
     assertEquals(staleUpdate.data.error.code, "VERSION_CONFLICT");
+
+    const disposableTask = await call("POST", `/api/trips/${tripId}/tasks`, {
+      title: "Tarea temporal",
+      phase: "Antes",
+      status: "Pendiente",
+      assigneeId: alex.data.user.id,
+    }, owner.cookie);
+    assertEquals(disposableTask.status, 201);
+    assertEquals(disposableTask.data.item.phase, undefined, "Las tareas ya no deben conservar fases");
+    const updatedTask = await call("PATCH", `/api/trips/${tripId}/tasks/${disposableTask.data.item.id}`, {
+      notes: "Información actualizada",
+      version: 1,
+    }, owner.cookie);
+    assertEquals(updatedTask.status, 200);
+    const staleDelete = await call(
+      "DELETE",
+      `/api/trips/${tripId}/tasks/${disposableTask.data.item.id}`,
+      { version: 1 },
+      owner.cookie,
+    );
+    assertEquals(staleDelete.status, 409, "No debe eliminar una tarea modificada por otra persona");
+    const currentDelete = await call(
+      "DELETE",
+      `/api/trips/${tripId}/tasks/${disposableTask.data.item.id}`,
+      { version: 2 },
+      owner.cookie,
+    );
+    assertEquals(currentDelete.status, 200);
 
     const logs = await call("GET", `/api/trips/${tripId}/bootstrap`, null, owner.cookie);
     assertEquals(logs.status, 200);

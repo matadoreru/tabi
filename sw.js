@@ -1,4 +1,4 @@
-const CACHE = "tabi-v11";
+const CACHE = "tabi-v12";
 const ASSETS = [
   "./",
   "./index.html",
@@ -6,12 +6,16 @@ const ASSETS = [
   "./assets/icon.svg",
   "./src/styles.css",
   "./src/app.js",
+  "./src/api-client.js",
   "./src/data.js",
   "./src/countries.js",
+  "./src/currency.js",
   "./src/domain.js",
   "./src/emojis.js",
   "./src/store.js",
+  "./src/session.js",
   "./src/ui.js",
+  "./src/visuals.js",
   "./src/permissions.js",
 ];
 self.addEventListener(

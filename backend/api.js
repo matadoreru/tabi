@@ -14,16 +14,14 @@ import { randomToken, sha256 } from "./crypto.js";
 import { CONFIG, ENTITY_TABLES } from "./config.js";
 import { body, HttpError, json, newId, now, validateMutationOrigin } from "./http.js";
 import { eventStream, publish } from "./events.js";
+import { getExchangeRate } from "./exchange-rates.js";
 import { googleMapsUrl, resolveGoogleMapsUrl } from "./google-maps.js";
 import { PERMISSIONS, permissionsForRole } from "../src/permissions.js";
 import { findPlaceDuplicate, inspirationLink } from "../src/domain.js";
+import { alternateCurrency, isSupportedCurrency } from "../src/currency.js";
 
 const editPermission = (collection) =>
-  collection === "expenses" || collection === "funds"
-    ? PERMISSIONS.BUDGET_EDIT
-    : collection === "documents"
-    ? PERMISSIONS.DOCUMENT_UPLOAD
-    : PERMISSIONS.TRIP_EDIT;
+  collection === "expenses" || collection === "funds" ? PERMISSIONS.BUDGET_EDIT : PERMISSIONS.TRIP_EDIT;
 const userSelect = "u.id,u.name,u.username,u.email,u.avatar_url,u.created_at";
 
 export async function api(request, pathname) {
@@ -55,6 +53,17 @@ export async function api(request, pathname) {
   if (parts[0] === "maps" && parts[1] === "resolve" && request.method === "POST") {
     const input = await body(request);
     return json({ url: await resolveGoogleMapsUrl(input.url) });
+  }
+  if (parts[0] === "exchange-rates") {
+    if (request.method === "GET") {
+      const url = new URL(request.url);
+      return json(await getExchangeRate(url.searchParams.get("base"), url.searchParams.get("quote")));
+    }
+    if (request.method === "POST") {
+      const input = await body(request);
+      return json(await getExchangeRate(input.base, input.quote, { force: Boolean(input.force) }));
+    }
+    throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
   }
   if (parts[0] !== "trips") throw new HttpError(404, "NOT_FOUND", "Ruta no encontrada.");
   if (parts.length === 1) return tripCollectionRoutes(request, user);
@@ -109,6 +118,7 @@ async function tripCollectionRoutes(request, user) {
   if (request.method === "POST") {
     const input = await body(request);
     validateTrip(input);
+    const extra = tripExtra(input);
     const timestamp = now();
     const id = newId("trip");
     transaction(() => {
@@ -125,7 +135,7 @@ async function tripCollectionRoutes(request, user) {
           Number(input.travelers || 1),
           Number(input.budget || 0),
           input.currency || "JPY",
-          "{}",
+          JSON.stringify(extra),
           1,
           timestamp,
           timestamp,
@@ -161,9 +171,10 @@ async function tripRoutes(request, user, tripId) {
     if (Number(input.version) !== current.version) conflict(current.version);
     const merged = { ...readTrip(current), ...input };
     validateTrip(merged);
+    const extra = tripExtra(merged, JSON.parse(current.data || "{}"));
     const timestamp = now();
     const result = db.prepare(
-      "UPDATE trips SET name=?,emoji=?,country=?,start_date=?,end_date=?,travelers=?,budget=?,currency=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND version=?",
+      "UPDATE trips SET name=?,emoji=?,country=?,start_date=?,end_date=?,travelers=?,budget=?,currency=?,data=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND version=?",
     )
       .run(
         merged.name,
@@ -174,6 +185,7 @@ async function tripRoutes(request, user, tripId) {
         Number(merged.travelers),
         Number(merged.budget),
         merged.currency,
+        JSON.stringify(extra),
         timestamp,
         user.id,
         tripId,
@@ -233,6 +245,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     const entityId = newId(collection.slice(0, 3));
     const data = cleanEntity(input);
     validateEntity(collection, data);
+    await attachExchangeSnapshot(tripId, data, input);
     if (collection === "activities") assertActivityReference(tripId, data);
     if (collection === "places" && googleMapsUrl(data.link)) data.link = await resolveGoogleMapsUrl(data.link);
     if (collection === "inspirations") assertUniqueInspiration(tripId, data.url);
@@ -256,6 +269,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     delete data.id;
     delete data.tripId;
     validateEntity(collection, data);
+    await attachExchangeSnapshot(tripId, data, input);
     if (collection === "activities") assertActivityReference(tripId, data);
     if (collection === "places" && googleMapsUrl(data.link)) data.link = await resolveGoogleMapsUrl(data.link);
     if (collection === "inspirations") assertUniqueInspiration(tripId, data.url, id);
@@ -273,7 +287,13 @@ async function entityRoutes(request, user, tripId, collection, id) {
     return json({ item: readEntity(db.prepare(`SELECT * FROM ${table} WHERE id=? AND trip_id=?`).get(id, tripId)) });
   }
   if (request.method === "DELETE") {
-    db.prepare(`DELETE FROM ${table} WHERE id=? AND trip_id=?`).run(id, tripId);
+    if (Number(input.version) !== current.version) conflict(current.version);
+    const result = db.prepare(`DELETE FROM ${table} WHERE id=? AND trip_id=? AND version=?`).run(
+      id,
+      tripId,
+      current.version,
+    );
+    if (!result.changes) conflict(current.version + 1);
     audit(tripId, user.id, "entity.deleted", collection, id, { title: entityTitle(collection, readEntity(current)) });
     emit(tripId, user, "entity.deleted", collection, id);
     return json({ ok: true });
@@ -717,6 +737,7 @@ async function importTripData(request, user, tripId) {
 }
 
 function readTrip(row) {
+  const extra = JSON.parse(row.data || "{}");
   return {
     id: row.id,
     name: row.name,
@@ -727,6 +748,12 @@ function readTrip(row) {
     travelers: row.travelers,
     budget: row.budget,
     currency: row.currency,
+    secondaryCurrency: extra.secondaryCurrency || alternateCurrency(row.currency),
+    exchangeRateMode: extra.exchangeRateMode || "manual",
+    manualExchangeRate: Number(extra.manualExchangeRate || extra.exchangeRate || 0.0058),
+    exchangeRate: Number(extra.manualExchangeRate || extra.exchangeRate || 0.0058),
+    budgetCurrency: extra.budgetCurrency || row.currency,
+    extra,
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -842,7 +869,7 @@ function emit(tripId, user, action, collection, entityId) {
 }
 function entityTitle(collection, item) {
   return item.title || item.name || item.product ||
-    ({ expenses: "Gasto", documents: "Documento", inspirations: "Inspiración" })[collection] || "Elemento";
+    ({ expenses: "Gasto", inspirations: "Inspiración" })[collection] || "Elemento";
 }
 
 function assertUniqueInspiration(tripId, url, excludedId = "") {
@@ -892,6 +919,48 @@ function validateTrip(input) {
     !/^\d{4}-\d{2}-\d{2}$/.test(input.startDate || "") || !/^\d{4}-\d{2}-\d{2}$/.test(input.endDate || "") ||
     input.startDate > input.endDate
   ) throw new HttpError(422, "INVALID_DATES", "Las fechas del viaje no son válidas.");
+  const travelers = Number(input.travelers ?? 1);
+  const budget = Number(input.budget ?? 0);
+  const exchangeRate = Number(
+    input.manualExchangeRate ?? input.exchangeRate ?? input.extra?.manualExchangeRate ?? input.extra?.exchangeRate ??
+      0.0058,
+  );
+  if (!Number.isInteger(travelers) || travelers < 1) {
+    throw new HttpError(422, "INVALID_TRAVELERS", "El número de viajeros debe ser un entero positivo.");
+  }
+  if (!Number.isFinite(budget) || budget < 0) {
+    throw new HttpError(422, "INVALID_BUDGET", "El presupuesto no es válido.");
+  }
+  if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+    throw new HttpError(422, "INVALID_EXCHANGE_RATE", "El tipo de cambio debe ser mayor que cero.");
+  }
+  const primary = input.currency || "JPY";
+  const secondary = input.secondaryCurrency || input.extra?.secondaryCurrency || alternateCurrency(primary);
+  if (!isSupportedCurrency(primary) || !isSupportedCurrency(secondary) || primary === secondary) {
+    throw new HttpError(422, "INVALID_CURRENCY_PAIR", "Selecciona dos monedas distintas y compatibles.");
+  }
+  const mode = input.exchangeRateMode || input.extra?.exchangeRateMode || "manual";
+  if (!["automatic", "manual"].includes(mode)) {
+    throw new HttpError(422, "INVALID_EXCHANGE_MODE", "El modo de tipo de cambio no es válido.");
+  }
+}
+
+function tripExtra(input, current = {}) {
+  const supplied = input.extra && typeof input.extra === "object" && !Array.isArray(input.extra) ? input.extra : {};
+  const primary = input.currency || "JPY";
+  const legacyRate = input.exchangeRate ?? supplied.exchangeRate;
+  return {
+    ...current,
+    ...supplied,
+    secondaryCurrency: input.secondaryCurrency ?? supplied.secondaryCurrency ?? current.secondaryCurrency ??
+      alternateCurrency(primary),
+    exchangeRateMode: input.exchangeRateMode ?? supplied.exchangeRateMode ?? current.exchangeRateMode ??
+      (legacyRate === undefined ? "automatic" : "manual"),
+    manualExchangeRate: Number(
+      input.manualExchangeRate ?? legacyRate ?? supplied.manualExchangeRate ?? current.manualExchangeRate ?? 0.0058,
+    ),
+    budgetCurrency: current.budgetCurrency ?? supplied.budgetCurrency ?? input.budgetCurrency ?? primary,
+  };
 }
 function validateEntity(collection, data) {
   if (Object.keys(data).length > 60) {
@@ -913,12 +982,15 @@ function validateEntity(collection, data) {
     stays: ["name", "checkInDate", "checkOutDate"],
     transports: ["origin", "destination", "departureDate"],
     reservations: ["title", "date"],
-    documents: ["name"],
     inspirations: ["url"],
     notes: ["title"],
   }[collection] || [];
   if (required.some((field) => !String(data[field] || "").trim())) {
     throw new HttpError(422, "MISSING_FIELDS", "Faltan campos obligatorios.");
+  }
+  if (collection === "tasks") delete data.phase;
+  if (data.currency && !isSupportedCurrency(data.currency)) {
+    throw new HttpError(422, "UNSUPPORTED_CURRENCY", "La moneda del importe no está soportada.");
   }
   if (collection === "purchases" && data.photo && !/^data:image\/(?:jpeg|png|webp);base64,/.test(data.photo)) {
     throw new HttpError(422, "INVALID_PURCHASE_PHOTO", "La foto del producto no tiene un formato válido.");
@@ -947,7 +1019,7 @@ function validateEntity(collection, data) {
   ) {
     throw new HttpError(422, "INVALID_PLACE_PHOTO", "La referencia de la foto de Google Maps no es válida.");
   }
-  if (collection === "stays") {
+  if (collection === "stays" || collection === "reservations") {
     if (
       data.checkOutDate < data.checkInDate ||
       (data.checkOutDate === data.checkInDate && data.checkInTime && data.checkOutTime &&
@@ -1024,6 +1096,7 @@ function validateEntity(collection, data) {
       "actualPrice",
       "maxBudget",
       "price",
+      "paidAmount",
       "ticketPrice",
     ]
   ) {
@@ -1034,6 +1107,67 @@ function validateEntity(collection, data) {
   if (collection === "funds" && Number(data.amount) <= 0) {
     throw new HttpError(422, "INVALID_AMOUNT", "La aportación debe ser mayor que cero.");
   }
+  if (collection === "purchases" && Number(data.actualPrice || 0) > 0) {
+    data.status = "Comprado";
+  }
+  if (collection === "stays") {
+    const total = Number(data.price || 0);
+    const paid = Number(data.paidAmount || 0);
+    if (paid > total) {
+      throw new HttpError(422, "INVALID_AMOUNT", "El importe pagado no puede superar el precio total.");
+    }
+    if (data.paymentStatus === "Pagado") data.paidAmount = total;
+    else if (paid > 0) data.paymentStatus = paid >= total && total > 0 ? "Pagado" : "Parcial";
+    else if (data.paymentStatus !== "Pagado") data.paymentStatus = "Pendiente";
+  }
+}
+
+const monetaryFields = new Set([
+  "amount",
+  "estimatedAmount",
+  "actualAmount",
+  "estimatedPrice",
+  "actualPrice",
+  "maxBudget",
+  "price",
+  "paidAmount",
+  "ticketPrice",
+]);
+
+async function attachExchangeSnapshot(tripId, data, submitted = data) {
+  if (!data.currency || ![...monetaryFields].some((field) => field in data)) return;
+  const monetaryChange = !data.exchangeRateSnapshot ||
+    Object.keys(submitted).some((field) => field === "currency" || monetaryFields.has(field));
+  if (!monetaryChange) return;
+  const row = db.prepare("SELECT currency,data FROM trips WHERE id=?").get(tripId);
+  const primary = row.currency;
+  const source = data.currency;
+  const extra = JSON.parse(row.data || "{}");
+  let rate = 1;
+  let provider = "identity";
+  let rateDate = now().slice(0, 10);
+  if (source !== primary) {
+    const secondary = extra.secondaryCurrency || alternateCurrency(primary);
+    const manual = Number(extra.manualExchangeRate || extra.exchangeRate || 0);
+    if (extra.exchangeRateMode === "manual" && source === secondary && manual > 0) {
+      rate = 1 / manual;
+      provider = "manual";
+    } else {
+      try {
+        const exchange = await getExchangeRate(source, primary);
+        rate = exchange.rate;
+        provider = exchange.provider;
+        rateDate = exchange.rateDate;
+      } catch {
+        return;
+      }
+    }
+  }
+  data.exchangeRateSnapshot = rate;
+  data.exchangeRateBase = source;
+  data.exchangeRateQuote = primary;
+  data.exchangeRateDate = rateDate;
+  data.exchangeRateProvider = provider;
 }
 function diff(before, after) {
   const ignored = new Set(["id", "tripId", "version", "createdAt", "updatedAt", "createdBy", "updatedBy", "photo"]);

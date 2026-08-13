@@ -8,9 +8,24 @@ docker compose ps
 
 # Tabi · planificador colaborativo de viajes
 
-Aplicación web multiusuario para organizar itinerarios, lugares, tareas, compras, presupuesto, alojamientos, transporte,
-reservas y documentos. Mantiene la interfaz PWA original, pero los datos compartidos se almacenan ahora en SQLite detrás
-de una API autenticada.
+Aplicación web multiusuario para organizar itinerarios, lugares, tareas, compras, presupuesto, alojamientos, transporte
+y reservas. Mantiene la interfaz PWA original, pero los datos compartidos se almacenan ahora en SQLite detrás de una API
+autenticada.
+
+Las tareas se gestionan como una sola lista TODO, con responsable, prioridad, fecha límite, estado e información libre.
+La moneda principal, secundaria y el tipo de cambio pertenecen al viaje, por lo que todos los miembros ven los mismos
+totales.
+
+## Monedas y tipos de cambio
+
+`src/currency.js` centraliza las monedas admitidas, precisión, formato y conversiones. Cada movimiento conserva su
+importe y moneda originales; cambiar la moneda principal solo modifica cómo se calculan y presentan los resúmenes. Al
+guardar un importe, la API añade una instantánea del cambio utilizado como referencia histórica y respaldo.
+
+El modo automático consulta Frankfurter exclusivamente desde el backend, guarda el resultado en SQLite durante 12 horas
+y reutiliza el último valor conocido si el proveedor no responde. No requiere ni expone claves. El modo manual conserva
+un cambio compartido entre la moneda principal y secundaria. Los tipos automáticos son valores de referencia diarios, no
+cotizaciones para operaciones financieras.
 
 ## Ejecutar
 
@@ -48,11 +63,14 @@ backend/
   crypto.js                   PBKDF2, tokens y hashing SHA-256
   database.js                 esquema SQLite y migraciones incrementales
   events.js                   sincronización Server-Sent Events
+  exchange-rates.js           proveedor desacoplado y caché de tipos de cambio
   http.js                     errores tipados, cookies y protección de origen
 src/
   api-client.js               cliente HTTP y errores de API
   session.js                  currentUser/currentTrip/membership/permissions
   store.js                    repositorio remoto y suscripción en tiempo real
+  currency.js                 catálogo, formato y conversión central de monedas
+  visuals.js                  iconos y colores compartidos de estados
   permissions.js              capabilities y mapa central de roles
   app.js                      router, controladores y composición de vistas
   ui.js                       componentes HTML, modal y feedback
@@ -118,11 +136,11 @@ permanecen intactos en el viaje de destino.
 ### Autorización
 
 Los roles no se comprueban de manera dispersa. `src/permissions.js` define capabilities como `TRIP_EDIT`,
-`MEMBER_INVITE`, `BUDGET_EDIT` o `DOCUMENT_UPLOAD`, junto con el mapa único `ROLE_PERMISSIONS`. `authorize()` resuelve
-membresía y capability antes de cualquier acceso.
+`MEMBER_INVITE` o `BUDGET_EDIT`, junto con el mapa único `ROLE_PERMISSIONS`. `authorize()` resuelve membresía y
+capability antes de cualquier acceso.
 
 - Owner: todas las capabilities.
-- Editor: lectura, edición de contenido, presupuesto, documentos y duplicado.
+- Editor: lectura, edición de contenido, presupuesto y duplicado.
 - Viewer: solo lectura.
 
 Cambiar roles, expulsar miembros y transferir propiedad se realiza mediante operaciones específicas y transacciones. El
@@ -155,5 +173,4 @@ máximo, permisos Viewer, aislamiento de viajes/IDOR, auditoría y conflictos de
 
 SQLite con WAL es adecuado para uso personal o un grupo pequeño en una única instancia. Para una instalación con varias
 réplicas, se puede mantener la API y migrar el repositorio a PostgreSQL/PostGIS; SSE debería respaldarse entonces con
-Redis o `LISTEN/NOTIFY`. Los documentos siguen siendo enlaces: almacenar pasaportes o PDFs requeriría object storage
-cifrado, antivirus, URLs firmadas y una política explícita de retención.
+Redis o `LISTEN/NOTIFY`.

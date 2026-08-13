@@ -10,8 +10,17 @@ import {
   itineraryAnalysis,
   minutes,
   sharedInspirationLink,
+  stayBudgetAmounts,
   stayNights,
 } from "./domain.js";
+import {
+  convertCurrency,
+  currencyDefinition,
+  formatCurrency,
+  moneyAmounts,
+  rateKey,
+  tripCurrencyConfig,
+} from "./currency.js";
 
 function assertEquals(actual, expected) {
   if (actual !== expected) throw new Error(`Esperado ${expected}; recibido ${actual}`);
@@ -83,6 +92,33 @@ Deno.test("calcula presupuesto con compras realizadas", () => {
   assertEquals(result.remaining, 750);
   assertEquals(result.perPerson, 125);
 });
+Deno.test("una compra con precio pagado cuenta aunque conserve un estado anterior", () => {
+  const result = budgetSummary({ budget: 1000 }, [], [{ status: "Pendiente", actualPrice: 125 }]);
+  assertEquals(result.spent, 125);
+  assertEquals(result.shoppingPlanned, 0);
+});
+Deno.test("incluye alojamientos pagados y pendientes en el presupuesto", () => {
+  const result = budgetSummary(
+    { budget: 2000, travelers: 2 },
+    [],
+    [],
+    [],
+    [
+      { price: 600, paymentStatus: "Pagado", bookingStatus: "Confirmada" },
+      { price: 800, paidAmount: 300, paymentStatus: "Parcial", bookingStatus: "Confirmada" },
+      { price: 900, paymentStatus: "Pagado", bookingStatus: "Cancelada" },
+    ],
+  );
+  assertEquals(result.spent, 900);
+  assertEquals(result.committed, 500);
+  assertEquals(result.lodgingTotal, 1400);
+  assertEquals(result.remaining, 1100);
+});
+Deno.test("mantiene compatibles los alojamientos pagados sin paidAmount", () => {
+  const result = stayBudgetAmounts({ price: 450, paymentStatus: "Pagado" });
+  assertEquals(result.paid, 450);
+  assertEquals(result.pending, 0);
+});
 Deno.test("suma fondos aportados al presupuesto base", () => {
   const result = budgetSummary({ budget: 1000, travelers: 2 }, [{ actualAmount: 200 }], [], [{ amount: 500 }]);
   assertEquals(result.budget, 1500);
@@ -113,4 +149,21 @@ Deno.test("calcula distancia geográfica", () =>
 Deno.test("calcula las noches de un alojamiento sin depender del cambio horario", () => {
   assertEquals(stayNights({ checkInDate: "2026-10-10", checkOutDate: "2026-10-13" }), 3);
   assertEquals(stayNights({ checkInDate: "", checkOutDate: "2026-10-13" }), 0);
+});
+
+Deno.test("centraliza formato, precisión y conversión de monedas", () => {
+  assertEquals(currencyDefinition("JPY").digits, 0);
+  assertEquals(currencyDefinition("EUR").digits, 2);
+  assertEquals(formatCurrency(12500, "JPY").includes("12.500"), true);
+  assertAlmostEquals(convertCurrency(100, "USD", "EUR", { "USD:EUR": 0.9 }), 90, 0.0001);
+});
+
+Deno.test("conserva el importe original al cambiar la moneda principal", () => {
+  const config = tripCurrencyConfig(
+    { currency: "USD", secondaryCurrency: "EUR", exchangeRateMode: "automatic" },
+    { [rateKey("JPY", "USD")]: 0.0068, [rateKey("USD", "EUR")]: 0.91 },
+  );
+  const amounts = moneyAmounts(12500, "JPY", config);
+  assertAlmostEquals(amounts.primaryAmount, 85, 0.0001);
+  assertAlmostEquals(amounts.secondaryAmount, 77.35, 0.0001);
 });

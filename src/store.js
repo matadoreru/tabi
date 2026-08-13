@@ -1,7 +1,9 @@
 import { apiClient } from "./api-client.js";
+import { rateKey } from "./currency.js";
 
 const SETTINGS_KEY = "tabi-settings-v2";
 const LEGACY_KEY = "tabi-data-v1";
+const EXCHANGE_RATE_CLIENT_TTL_MS = 12 * 60 * 60 * 1000;
 const COLLECTIONS = [
   "activities",
   "places",
@@ -12,7 +14,6 @@ const COLLECTIONS = [
   "stays",
   "transports",
   "reservations",
-  "documents",
   "inspirations",
   "notes",
 ];
@@ -28,6 +29,8 @@ export class Store {
       members: [],
       invitations: [],
       logs: [],
+      exchangeRates: {},
+      exchangeRateMeta: {},
       ...Object.fromEntries(COLLECTIONS.map((name) => [name, []])),
     };
   }
@@ -35,14 +38,12 @@ export class Store {
     try {
       return {
         theme: "system",
-        exchangeRate: .0058,
-        defaultCurrency: "JPY",
         dayStart: "08:00",
         dayEnd: "22:00",
         ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"),
       };
     } catch {
-      return { theme: "system", exchangeRate: .0058, dayStart: "08:00", dayEnd: "22:00" };
+      return { theme: "system", dayStart: "08:00", dayEnd: "22:00" };
     }
   }
   getState() {
@@ -56,10 +57,69 @@ export class Store {
   }
   async loadTrip(tripId, onRemoteChange) {
     const payload = await apiClient.get(`/trips/${tripId}/bootstrap`);
-    this.state = { ...this.state, ...payload, trips: [payload.trip], activeTripId: tripId };
+    const exchange = await this.loadExchangeRates(payload);
+    this.state = { ...this.state, ...payload, ...exchange, trips: [payload.trip], activeTripId: tripId };
     this.connectEvents(tripId, onRemoteChange);
     this.notify();
     return payload;
+  }
+  async loadExchangeRates(payload, force = false) {
+    const trip = payload.trip;
+    const primary = trip.currency;
+    const secondary = trip.secondaryCurrency;
+    const currencies = new Set([trip.budgetCurrency || primary, secondary]);
+    for (const collection of COLLECTIONS) {
+      for (const item of payload[collection] || []) currencies.add(item.currency || primary);
+    }
+    const pairs = [...currencies].filter((currency) => currency && currency !== primary).map((currency) => [
+      currency,
+      primary,
+    ]);
+    if (trip.exchangeRateMode === "automatic" && secondary !== primary) pairs.push([primary, secondary]);
+    const uniquePairs = [...new Map(pairs.map((pair) => [rateKey(...pair), pair])).values()];
+    const rates = {};
+    const meta = {};
+    if (trip.exchangeRateMode === "manual") {
+      const manual = Number(trip.manualExchangeRate || 0);
+      if (manual > 0) {
+        rates[rateKey(primary, secondary)] = manual;
+        rates[rateKey(secondary, primary)] = 1 / manual;
+        meta[rateKey(primary, secondary)] = { provider: "manual", rate: manual };
+      }
+    }
+    await Promise.all(uniquePairs.map(async ([base, quote]) => {
+      if (trip.exchangeRateMode === "manual" && base === primary && quote === secondary) return;
+      const key = rateKey(base, quote);
+      const existingMeta = this.state.exchangeRateMeta?.[key];
+      const existingRate = Number(this.state.exchangeRates?.[key]);
+      if (
+        !force && existingRate > 0 && existingMeta?.fetchedAt &&
+        Date.now() - Date.parse(existingMeta.fetchedAt) < EXCHANGE_RATE_CLIENT_TTL_MS
+      ) {
+        rates[key] = existingRate;
+        rates[rateKey(quote, base)] = 1 / existingRate;
+        meta[key] = existingMeta;
+        return;
+      }
+      try {
+        const result = force
+          ? await apiClient.post("/exchange-rates", { base, quote, force: true })
+          : await apiClient.get(`/exchange-rates?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`);
+        rates[key] = Number(result.rate);
+        rates[rateKey(quote, base)] = 1 / Number(result.rate);
+        meta[key] = result;
+      } catch (error) {
+        meta[key] = { error: error.message };
+      }
+    }));
+    return { exchangeRates: rates, exchangeRateMeta: meta };
+  }
+  async refreshExchangeRates(force = true) {
+    if (!this.activeTrip) return;
+    const exchange = await this.loadExchangeRates(this.state, force);
+    this.state = { ...this.state, ...exchange };
+    this.notify();
+    return exchange;
   }
   reload() {
     if (this.state.activeTripId) return this.loadTrip(this.state.activeTripId);
@@ -89,7 +149,8 @@ export class Store {
     return result.item;
   }
   async remove(collection, id) {
-    await apiClient.delete(`/trips/${this.state.activeTripId}/${collection}/${id}`);
+    const current = this.state[collection].find((item) => item.id === id);
+    await apiClient.delete(`/trips/${this.state.activeTripId}/${collection}/${id}`, { version: current?.version });
     this.state[collection] = this.state[collection].filter((item) => item.id !== id);
     this.notify();
   }

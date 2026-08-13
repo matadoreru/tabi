@@ -61,7 +61,6 @@ const migrations = [
   CREATE TABLE stays(id TEXT PRIMARY KEY, trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT REFERENCES users(id) ON DELETE SET NULL, updated_by TEXT REFERENCES users(id) ON DELETE SET NULL);
   CREATE TABLE transports(id TEXT PRIMARY KEY, trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT REFERENCES users(id) ON DELETE SET NULL, updated_by TEXT REFERENCES users(id) ON DELETE SET NULL);
   CREATE TABLE reservations(id TEXT PRIMARY KEY, trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT REFERENCES users(id) ON DELETE SET NULL, updated_by TEXT REFERENCES users(id) ON DELETE SET NULL);
-  CREATE TABLE documents(id TEXT PRIMARY KEY, trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT REFERENCES users(id) ON DELETE SET NULL, updated_by TEXT REFERENCES users(id) ON DELETE SET NULL);
   `,
   `
   CREATE INDEX idx_activities_trip ON activities(trip_id, updated_at DESC);
@@ -72,7 +71,6 @@ const migrations = [
   CREATE INDEX idx_stays_trip ON stays(trip_id, updated_at DESC);
   CREATE INDEX idx_transports_trip ON transports(trip_id, updated_at DESC);
   CREATE INDEX idx_reservations_trip ON reservations(trip_id, updated_at DESC);
-  CREATE INDEX idx_documents_trip ON documents(trip_id, updated_at DESC);
   `,
   `
   ALTER TABLE users ADD COLUMN username TEXT;
@@ -90,6 +88,37 @@ const migrations = [
   `
   CREATE TABLE notes(id TEXT PRIMARY KEY, trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT REFERENCES users(id) ON DELETE SET NULL, updated_by TEXT REFERENCES users(id) ON DELETE SET NULL);
   CREATE INDEX idx_notes_trip ON notes(trip_id, updated_at DESC);
+  `,
+  `
+  UPDATE tasks SET data=json_remove(data, '$.phase') WHERE json_type(data, '$.phase') IS NOT NULL;
+  `,
+  `
+  CREATE TABLE exchange_rates(
+    base_currency TEXT NOT NULL, quote_currency TEXT NOT NULL, rate REAL NOT NULL CHECK(rate > 0),
+    provider TEXT NOT NULL, rate_date TEXT NOT NULL, fetched_at TEXT NOT NULL,
+    PRIMARY KEY(base_currency, quote_currency)
+  ) WITHOUT ROWID, STRICT;
+  UPDATE trips SET data=json_set(
+    data,
+    '$.secondaryCurrency', CASE WHEN currency='EUR' THEN 'JPY' ELSE 'EUR' END,
+    '$.exchangeRateMode', 'manual',
+    '$.manualExchangeRate', CASE
+      WHEN currency='EUR' AND COALESCE(json_extract(data, '$.exchangeRate'), 0) > 0
+        THEN 1.0 / json_extract(data, '$.exchangeRate')
+      ELSE COALESCE(json_extract(data, '$.exchangeRate'), 0.0058)
+    END,
+    '$.budgetCurrency', currency
+  );
+  UPDATE expenses SET data=json_set(data, '$.currency', (SELECT currency FROM trips WHERE trips.id=expenses.trip_id)) WHERE json_extract(data, '$.currency') IS NULL;
+  UPDATE funds SET data=json_set(data, '$.currency', (SELECT currency FROM trips WHERE trips.id=funds.trip_id)) WHERE json_extract(data, '$.currency') IS NULL;
+  UPDATE purchases SET data=json_set(data, '$.currency', (SELECT currency FROM trips WHERE trips.id=purchases.trip_id)) WHERE json_extract(data, '$.currency') IS NULL;
+  UPDATE stays SET data=json_set(data, '$.currency', (SELECT currency FROM trips WHERE trips.id=stays.trip_id)) WHERE json_extract(data, '$.currency') IS NULL;
+  UPDATE transports SET data=json_set(data, '$.currency', (SELECT currency FROM trips WHERE trips.id=transports.trip_id)) WHERE json_extract(data, '$.currency') IS NULL;
+  UPDATE reservations SET data=json_set(data, '$.currency', (SELECT currency FROM trips WHERE trips.id=reservations.trip_id)) WHERE json_extract(data, '$.currency') IS NULL;
+  UPDATE places SET data=json_set(data, '$.currency', (SELECT currency FROM trips WHERE trips.id=places.trip_id)) WHERE json_extract(data, '$.currency') IS NULL;
+  `,
+  `
+  DROP TABLE IF EXISTS documents;
   `,
 ];
 

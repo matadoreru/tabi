@@ -26,7 +26,6 @@ export const ENTITY_TABLES = Object.freeze({
   stays: "stays",
   transports: "transports",
   reservations: "reservations",
-  documents: "documents",
   inspirations: "inspirations",
   notes: "notes",
 });

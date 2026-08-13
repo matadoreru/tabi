@@ -1,4 +1,12 @@
 import { CATEGORIES } from "./data.js";
+import {
+  alternateCurrency,
+  convertCurrency,
+  currencyDefinition,
+  currencyOptions,
+  rateKey,
+  tripCurrencyConfig,
+} from "./currency.js";
 import { countryOptions, TRIP_EMOJIS } from "./countries.js";
 import {
   activityGoogleMapsUrl,
@@ -12,6 +20,7 @@ import {
   inspirationLink,
   itineraryAnalysis,
   sharedInspirationLink,
+  stayBudgetAmounts,
   stayNights,
 } from "./domain.js";
 import { EMOJI_GROUPS } from "./emojis.js";
@@ -25,6 +34,7 @@ import {
   fullDate,
   icon,
   modal,
+  moneyPair,
   searchKey,
   toast,
   visualLabel,
@@ -34,6 +44,7 @@ import { session } from "./session.js";
 import { PERMISSIONS, ROLE_LABELS } from "./permissions.js";
 
 const store = new Store();
+const MONEY_OPTIONS = currencyOptions();
 const app = document.querySelector("#app");
 const ui = {
   route: location.hash.slice(1) || "dashboard",
@@ -62,7 +73,6 @@ const NAV = [
   ["transport", "Transporte", "train"],
   ["reservations", "Reservas", "ticket"],
   ["inspiration", "Inspiración", "play"],
-  ["documents", "Documentos", "file"],
   ["settings", "Configuración", "settings"],
 ];
 const ROUTES = Object.fromEntries(NAV.map(([key, label]) => [key, label]));
@@ -72,14 +82,13 @@ const DESCRIPTIONS = {
   map: "Explora tus lugares y agrúpalos por zonas",
   places: "Tu colección de sitios por descubrir",
   purchases: "Caprichos, regalos y encargos bajo control",
-  tasks: "Antes, durante y después del viaje",
+  tasks: "Una lista clara de todo lo que queda por hacer",
   notes: "Ideas y apuntes del viaje, siempre a mano",
   budget: "Previsión y gasto real en un mismo sitio",
   stays: "Tus alojamientos y check-ins",
   transport: "Todos tus trayectos, conectados",
   reservations: "Referencias y horarios siempre a mano",
   inspiration: "Vídeos e ideas que quieres recordar para este viaje",
-  documents: "Enlaces y documentos importantes",
   settings: "Personaliza el viaje y protege tus datos",
 };
 
@@ -183,14 +192,15 @@ const fields = {
     { name: "lat", label: "Latitud", type: "number", step: "any" },
     { name: "lng", label: "Longitud", type: "number", step: "any" },
     { name: "hours", label: "Horario" },
-    { name: "estimatedPrice", label: "Precio estimado (¥)", type: "number", min: 0 },
+    { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
+    { name: "estimatedPrice", label: "Precio estimado", type: "number", min: 0, step: "0.01" },
     {
       name: "admission",
       label: "Entrada",
       type: "select",
       options: ["No necesita entrada", "Entrada gratuita", "Entrada de pago", "Reserva obligatoria"],
     },
-    { name: "ticketPrice", label: "Precio de la entrada (¥)", type: "number", min: 0 },
+    { name: "ticketPrice", label: "Precio de la entrada", type: "number", min: 0, step: "0.01" },
     { name: "duration", label: "Duración recomendada (min)", type: "number", min: 0 },
     { name: "priority", label: "Prioridad", type: "select", options: ["Imprescindible", "Alta", "Media", "Baja"] },
     { name: "assignedDate", label: "Día asignado", type: "date" },
@@ -206,12 +216,18 @@ const fields = {
   ],
   task: [
     { name: "title", label: "Tarea", required: true, full: true },
-    { name: "phase", label: "Momento", type: "select", options: ["Antes", "Durante", "Después"] },
+    { name: "assigneeId", label: "Responsable", type: "select", empty: "Sin asignar" },
     { name: "category", label: "Categoría", type: "select", options: CATEGORIES.task },
     { name: "priority", label: "Prioridad", type: "select", options: ["Alta", "Media", "Baja"] },
     { name: "dueDate", label: "Fecha límite", type: "date" },
     { name: "status", label: "Estado", type: "select", options: ["Pendiente", "Completada"] },
-    { name: "notes", label: "Notas", type: "textarea", full: true },
+    {
+      name: "notes",
+      label: "Información",
+      type: "textarea",
+      placeholder: "Detalles, enlaces, instrucciones o cualquier información útil…",
+      full: true,
+    },
   ],
   purchase: [
     { name: "product", label: "Producto", required: true, full: true },
@@ -226,8 +242,9 @@ const fields = {
     { name: "recipient", label: "Para quién" },
     { name: "city", label: "Ciudad" },
     { name: "store", label: "Tienda recomendada" },
-    { name: "estimatedPrice", label: "Precio estimado (¥)", type: "number", min: 0 },
-    { name: "maxBudget", label: "Presupuesto máximo (¥)", type: "number", min: 0 },
+    { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
+    { name: "estimatedPrice", label: "Precio estimado", type: "number", min: 0, step: "0.01" },
+    { name: "maxBudget", label: "Presupuesto máximo", type: "number", min: 0, step: "0.01" },
     { name: "priority", label: "Prioridad", type: "select", options: ["Alta", "Media", "Baja"] },
     {
       name: "status",
@@ -235,7 +252,13 @@ const fields = {
       type: "select",
       options: ["Pendiente", "Encontrado", "Comprado", "No encontrado"],
     },
-    { name: "actualPrice", label: "Precio real (¥)", type: "number", min: 0 },
+    {
+      name: "actualPrice",
+      label: "Precio pagado",
+      type: "number",
+      min: 0,
+      help: "Al indicar un importe, la compra se marcará automáticamente como comprada.",
+    },
     { name: "purchaseDate", label: "Fecha de compra", type: "date" },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
@@ -244,18 +267,18 @@ const fields = {
     { name: "category", label: "Categoría", type: "select", options: CATEGORIES.expense },
     { name: "city", label: "Ciudad" },
     { name: "date", label: "Fecha", type: "date" },
-    { name: "currency", label: "Moneda", type: "select", options: ["JPY", "EUR"] },
+    { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
     { name: "estimatedAmount", label: "Importe previsto", type: "number", min: 0, step: "0.01" },
     { name: "actualAmount", label: "Importe pagado", type: "number", min: 0, step: "0.01" },
     { name: "paymentStatus", label: "Pago", type: "select", options: ["Pendiente", "Parcial", "Pagado"] },
-    { name: "person", label: "Persona", type: "select", options: ["Ambos", "Persona 1", "Persona 2"] },
+    { name: "paidByUserId", label: "Pagado por", type: "select", empty: "Fondo común / sin asignar" },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
   fund: [
     { name: "title", label: "Concepto", required: true, placeholder: "Ej. Fondo inicial", full: true },
     { name: "contributor", label: "Aportado por", type: "select", required: true },
     { name: "date", label: "Fecha", type: "date", required: true },
-    { name: "currency", label: "Moneda", type: "select", options: ["JPY", "EUR"] },
+    { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
     { name: "amount", label: "Importe", type: "number", min: 0.01, step: "0.01", required: true },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
@@ -279,7 +302,15 @@ const fields = {
     { name: "checkInTime", label: "Hora de entrada", type: "time" },
     { name: "checkOutDate", label: "Salida", type: "date", required: true },
     { name: "checkOutTime", label: "Hora de salida", type: "time" },
-    { name: "price", label: "Precio total (¥)", type: "number", min: 0 },
+    { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
+    { name: "price", label: "Precio total", type: "number", min: 0, step: "0.01" },
+    {
+      name: "paidAmount",
+      label: "Importe pagado",
+      type: "number",
+      min: 0,
+      help: "Permite reflejar pagos parciales. El estado se actualizará automáticamente.",
+    },
     { name: "paymentStatus", label: "Pago", type: "select", options: ["Pendiente", "Parcial", "Pagado"] },
     { name: "reference", label: "Número de reserva" },
     { name: "cancellationDeadline", label: "Cancelación gratuita hasta", type: "date" },
@@ -312,7 +343,8 @@ const fields = {
     { name: "arrivalDate", label: "Fecha de llegada", type: "date" },
     { name: "arrivalTime", label: "Hora de llegada", type: "time" },
     { name: "duration", label: "Duración (min)", type: "number", min: 0 },
-    { name: "price", label: "Precio (¥)", type: "number", min: 0 },
+    { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
+    { name: "price", label: "Precio", type: "number", min: 0, step: "0.01" },
     { name: "reservation", label: "Reserva" },
     { name: "seat", label: "Asiento" },
     {
@@ -335,28 +367,12 @@ const fields = {
     { name: "date", label: "Fecha", type: "date", required: true },
     { name: "time", label: "Hora", type: "time" },
     { name: "reference", label: "Referencia" },
+    { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
+    { name: "price", label: "Precio total", type: "number", min: 0, step: "0.01" },
+    { name: "paidAmount", label: "Importe pagado", type: "number", min: 0, step: "0.01" },
     { name: "paymentStatus", label: "Pago", type: "select", options: ["Pendiente", "Parcial", "Pagado"] },
     { name: "status", label: "Estado", type: "select", options: ["Pendiente", "Confirmada", "Realizada", "Cancelada"] },
     { name: "link", label: "Documento / enlace", type: "url", full: true },
-    { name: "notes", label: "Notas", type: "textarea", full: true },
-  ],
-  document: [
-    { name: "name", label: "Documento", required: true, full: true },
-    {
-      name: "type",
-      label: "Tipo",
-      type: "select",
-      options: ["Billete", "Reserva", "PDF", "QR", "Seguro", "Pasaporte", "Confirmación", "Otro"],
-    },
-    { name: "reference", label: "Referencia" },
-    { name: "expiryDate", label: "Caducidad", type: "date" },
-    {
-      name: "link",
-      label: "Enlace seguro",
-      type: "url",
-      full: true,
-      help: "Para proteger tus datos, Tabi guarda el enlace y no sube archivos a servidores.",
-    },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
   inspiration: [
@@ -400,10 +416,27 @@ function resolvedFields(type, values = {}) {
     ...field,
     options: type === "fund" && field.name === "contributor"
       ? fundContributorOptions(store.getState().members, values.contributor)
+      : ["task:assigneeId", "expense:paidByUserId"].includes(`${type}:${field.name}`)
+      ? memberOptions(values[field.name])
       : typeof field.options === "function"
       ? field.options()
       : field.options,
   }));
+}
+
+function memberOptions(currentId = "") {
+  const options = store.collection("members").map(({ user }) => ({
+    value: user.id,
+    label: user.username ? `${user.name} (@${user.username})` : user.name,
+  }));
+  if (currentId && !options.some(({ value }) => value === currentId)) {
+    options.push({ value: currentId, label: "Miembro anterior" });
+  }
+  return options;
+}
+
+function memberName(userId, fallback = "Sin asignar") {
+  return store.collection("members").find(({ user }) => user.id === userId)?.user.name || fallback;
 }
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -425,27 +458,87 @@ function tripDay(date) {
 function daysUntil(date) {
   return Math.ceil((new Date(`${date}T12:00:00`) - new Date()) / 86400000);
 }
-function normalizedAmount(expense) {
-  return expense.currency === "EUR"
-    ? Number(expense.actualAmount || 0) / Number(store.getState().settings.exchangeRate || 1)
-    : Number(expense.actualAmount || 0);
+function moneyConfig() {
+  return tripCurrencyConfig(store.activeTrip, store.getState().exchangeRates);
+}
+function itemCurrency(item) {
+  return item?.currency || store.activeTrip.budgetCurrency || store.activeTrip.currency;
+}
+function toPrimary(amount, currency = store.activeTrip.currency) {
+  const config = moneyConfig();
+  const converted = convertCurrency(amount, currency, config.primary, config.rates);
+  return converted ?? (currency === config.primary ? Number(amount || 0) : 0);
+}
+function itemToPrimary(amount, item) {
+  const converted = convertCurrency(amount, itemCurrency(item), store.activeTrip.currency, moneyConfig().rates);
+  if (converted !== null) return converted;
+  const snapshot = Number(item?.exchangeRateSnapshot || 0);
+  if (
+    snapshot > 0 && item.exchangeRateBase === itemCurrency(item) && item.exchangeRateQuote === store.activeTrip.currency
+  ) {
+    return Number(amount || 0) * snapshot;
+  }
+  return itemCurrency(item) === store.activeTrip.currency ? Number(amount || 0) : 0;
+}
+function money(amount, currency = store.activeTrip.currency, options) {
+  return moneyPair(amount, currency, moneyConfig(), options);
+}
+function itemMoney(amount, item, options) {
+  const config = moneyConfig();
+  const snapshot = Number(item?.exchangeRateSnapshot || 0);
+  if (snapshot > 0 && item.exchangeRateBase && item.exchangeRateQuote) {
+    config.rates[rateKey(item.exchangeRateBase, item.exchangeRateQuote)] ??= snapshot;
+    config.rates[rateKey(item.exchangeRateQuote, item.exchangeRateBase)] ??= 1 / snapshot;
+  }
+  return moneyPair(amount, itemCurrency(item), config, options);
+}
+function primaryMoney(amount, currency = store.activeTrip.currency) {
+  return formatMoney(toPrimary(amount, currency), store.activeTrip.currency);
 }
 function normalizedExpenses() {
   return store.collection("expenses").map((item) => ({
     ...item,
-    actualAmount: normalizedAmount(item),
-    estimatedAmount: item.currency === "EUR"
-      ? Number(item.estimatedAmount || 0) / Number(store.getState().settings.exchangeRate || 1)
-      : Number(item.estimatedAmount || 0),
+    actualAmount: itemToPrimary(item.actualAmount, item),
+    estimatedAmount: itemToPrimary(item.estimatedAmount, item),
   }));
 }
 function normalizedFunds() {
   return store.collection("funds").map((item) => ({
     ...item,
-    amount: item.currency === "EUR"
-      ? Number(item.amount || 0) / Number(store.getState().settings.exchangeRate || 1)
-      : Number(item.amount || 0),
+    amount: itemToPrimary(item.amount, item),
   }));
+}
+
+function normalizedPurchases() {
+  return store.collection("purchases").map((item) => ({
+    ...item,
+    estimatedPrice: itemToPrimary(item.estimatedPrice, item),
+    actualPrice: itemToPrimary(item.actualPrice, item),
+    maxBudget: itemToPrimary(item.maxBudget, item),
+  }));
+}
+
+function normalizedStays() {
+  return store.collection("stays").map((item) => ({
+    ...item,
+    price: itemToPrimary(item.price, item),
+    paidAmount: itemToPrimary(item.paidAmount, item),
+  }));
+}
+
+function normalizedBudgetTrip() {
+  return {
+    ...store.activeTrip,
+    budget: toPrimary(store.activeTrip.budget, store.activeTrip.budgetCurrency || store.activeTrip.currency),
+  };
+}
+
+function budgetChartItems(expenses, purchases = normalizedPurchases(), stays = normalizedStays()) {
+  return [
+    ...expenses,
+    ...purchases.map((item) => ({ category: "Compras", actualAmount: Number(item.actualPrice || 0) })),
+    ...stays.map((item) => ({ category: "Alojamiento", actualAmount: stayBudgetAmounts(item).paid })),
+  ].filter((item) => Number(item.actualAmount || 0) > 0);
 }
 
 function applyTheme() {
@@ -475,24 +568,6 @@ function versionReference(className = "") {
 
 function layout(content) {
   const trip = store.activeTrip;
-  const addable = {
-    itinerary: "Actividad",
-    places: "Lugar",
-    purchases: "Compra",
-    tasks: "Tarea",
-    notes: "Nota",
-    budget: "Gasto",
-    stays: "Alojamiento",
-    transport: "Transporte",
-    reservations: "Reserva",
-    inspiration: "Inspiración",
-    documents: "Documento",
-  }[ui.route];
-  const requiredPermission = ui.route === "budget"
-    ? PERMISSIONS.BUDGET_EDIT
-    : ui.route === "documents"
-    ? PERMISSIONS.DOCUMENT_UPLOAD
-    : PERMISSIONS.TRIP_EDIT;
   const members = store.collection("members");
   return `<div class="app-shell">
     <aside class="sidebar"><a class="brand" href="#dashboard"><span class="brand-mark">旅</span><span>Tabi<small>Travel planner</small></span></a><nav class="nav">${
@@ -512,13 +587,7 @@ function layout(content) {
       : ""
   }<button class="btn btn-secondary desktop-only" data-trip-list>Mis viajes</button><button class="btn btn-secondary icon-btn" data-theme-toggle aria-label="Cambiar tema">${
     icon(document.documentElement.dataset.theme === "dark" ? "sun" : "moon")
-  }</button>${
-    addable && session.can(requiredPermission)
-      ? `<button class="btn btn-primary" data-add="${ui.route}">${
-        icon("plus")
-      }<span>Añadir ${addable.toLowerCase()}</span></button>`
-      : ""
-  }</div></header><div class="content ${ui.route === "map" ? "content-map" : ""}">${content}</div>${
+  }</button></div></header><div class="content ${ui.route === "map" ? "content-map" : ""}">${content}</div>${
     versionReference("app-version-project-mobile")
   }</main>
     <nav class="mobile-nav">${navButton("dashboard", "Inicio", "dashboard", true)}${
@@ -545,7 +614,6 @@ function render() {
     transport: renderTransport,
     reservations: renderReservations,
     inspiration: renderInspiration,
-    documents: renderDocuments,
     settings: renderSettings,
     more: renderMore,
   };
@@ -750,7 +818,15 @@ function createTrip() {
       { name: "endDate", label: "Fin", type: "date", required: true },
       { name: "travelers", label: "Viajeros", type: "number", min: 1, value: 1 },
       { name: "budget", label: "Presupuesto", type: "number", min: 0 },
-      { name: "currency", label: "Moneda", type: "select", options: ["JPY", "EUR"] },
+      { name: "currency", label: "Moneda principal", type: "select", options: MONEY_OPTIONS },
+      { name: "secondaryCurrency", label: "Moneda secundaria", type: "select", options: MONEY_OPTIONS, value: "EUR" },
+      {
+        name: "exchangeRateMode",
+        label: "Tipo de cambio",
+        type: "select",
+        options: [{ value: "automatic", label: "Automático (Internet)" }, { value: "manual", label: "Manual" }],
+        value: "automatic",
+      },
     ],
     onSubmit: async (values) => {
       try {
@@ -764,7 +840,22 @@ function createTrip() {
         toast(error.message, "error");
       }
     },
+    onReady: initializeCurrencyPairFields,
   });
+}
+
+function initializeCurrencyPairFields(root) {
+  const primary = root.querySelector("#field-currency");
+  const secondary = root.querySelector("#field-secondaryCurrency");
+  if (!primary || !secondary) return;
+  const keepDistinct = (changed) => {
+    if (primary.value !== secondary.value) return;
+    if (changed === primary) secondary.value = alternateCurrency(primary.value);
+    else primary.value = alternateCurrency(secondary.value);
+  };
+  primary.addEventListener("change", () => keepDistinct(primary));
+  secondary.addEventListener("change", () => keepDistinct(secondary));
+  keepDistinct(primary);
 }
 
 async function enterTrip(tripId, route = "dashboard") {
@@ -933,17 +1024,23 @@ function renderDashboard() {
   const activities = activitiesForDate(date).sort((a, b) => a.start.localeCompare(b.start));
   const upcoming = activities[0];
   const expenses = normalizedExpenses();
-  const summary = budgetSummary(trip, expenses, store.collection("purchases"), normalizedFunds());
+  const purchases = normalizedPurchases();
+  const stays = normalizedStays();
+  const summary = budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays);
   const pendingTasks = store.collection("tasks").filter((task) => task.status !== "Completada");
   const pendingPurchases = store.collection("purchases").filter((item) =>
     item.status === "Pendiente" || item.status === "Encontrado"
+  );
+  const pendingPurchaseTotal = pendingPurchases.reduce(
+    (sum, item) => sum + itemToPrimary(item.estimatedPrice, item),
+    0,
   );
   const nextTransport =
     [...store.collection("transports")].filter((item) => item.departureDate >= today).sort((a, b) =>
       `${a.departureDate}${a.departureTime}`.localeCompare(`${b.departureDate}${b.departureTime}`)
     )[0];
   const countdown = daysUntil(trip.startDate);
-  const categoryTotals = groupTotals(expenses, "category");
+  const categoryTotals = groupTotals(budgetChartItems(expenses, purchases, stays), "category");
   const max = Math.max(...categoryTotals.map(([, value]) => value), 1);
   return `<div class="section-stack">
     <section class="hero card"><div><div class="hero-eyebrow">${
@@ -964,9 +1061,10 @@ function renderDashboard() {
     statCard(
       "wallet",
       "Presupuesto restante",
-      formatMoney(summary.remaining),
+      money(summary.remaining),
       `${Math.round(summary.spent / Math.max(summary.budget, 1) * 100)}% utilizado`,
       "",
+      true,
     )
   }
       ${statCard("clock", "Próximo evento", upcoming?.start || "—", upcoming?.title || "Sin planes", "red")}
@@ -995,12 +1093,12 @@ function renderDashboard() {
   }</h2><p>${activities.length} eventos planificados</p></div><button class="btn btn-ghost" data-go-date="${date}">Ver día ${
     icon("chevron")
   }</button></div>${miniTimeline(activities)}</section>
-      <section class="card card-pad"><div class="card-head"><div><h2>Gastos por categoría</h2><p>Importes reales convertidos a yenes</p></div><strong>${
-    formatMoney(summary.spent)
-  }</strong></div><div class="chart-bars">${
+      <section class="card card-pad"><div class="card-head"><div><h2>Gastos por categoría</h2><p>Importes reales en ${
+    esc(currencyDefinition(trip.currency).name.toLocaleLowerCase("es"))
+  }</p></div>${money(summary.spent)}</div><div class="chart-bars">${
     categoryTotals.map(([label, value]) =>
       `<div class="chart-column"><div class="chart-bar" style="height:${Math.max(3, value / max * 100)}%" data-value="${
-        formatMoney(value)
+        primaryMoney(value)
       }"></div><span class="chart-label">${esc(label)}</span></div>`
     ).join("")
   }</div></section>
@@ -1018,12 +1116,14 @@ function renderDashboard() {
     pendingTasks.slice(0, 4).map(taskRow).join("") || emptyState("Todo listo", "No quedan tareas pendientes.")
   }</div></section>
       <section class="card card-pad"><div class="card-head"><div><h3>Compras pendientes</h3><p>${
-    formatMoney(pendingPurchases.reduce((sum, p) => sum + p.estimatedPrice, 0))
+    money(pendingPurchaseTotal)
   } previstos</p></div></div><div class="item-list">${
     pendingPurchases.slice(0, 3).map((item) =>
       `<div class="list-item"><span class="stat-icon red">${icon("bag")}</span><div class="list-item-main"><strong>${
         esc(item.product)
-      }</strong><small>${esc(item.city || "Sin ciudad")} · ${formatMoney(item.estimatedPrice)}</small></div></div>`
+      }</strong><small>${esc(item.city || "Sin ciudad")} · ${
+        primaryMoney(item.estimatedPrice, itemCurrency(item))
+      }</small></div></div>`
     ).join("")
   }</div></section>
       <section class="card card-pad"><div class="card-head"><div><h3>Actividad reciente</h3><p>Cambios de todo el equipo</p></div></div><div class="activity-feed">${
@@ -1034,11 +1134,11 @@ function renderDashboard() {
   </div>`;
 }
 
-function statCard(iconName, label, value, meta, tone) {
+function statCard(iconName, label, value, meta, tone, valueIsHtml = false) {
   return `<section class="card stat-card"><div class="stat-top"><span>${
     esc(label)
   }</span><span class="stat-icon ${tone}">${icon(iconName)}</span></div><div><div class="stat-value">${
-    esc(value)
+    valueIsHtml ? value : esc(value)
   }</div><div class="stat-meta">${esc(meta)}</div></div></section>`;
 }
 
@@ -1086,7 +1186,7 @@ function activityDisplay(item) {
     const place = store.collection("places").find(({ id }) => id === item.placeId);
     if (place) {
       const admission = `${place.admission || "Entrada no indicada"}${
-        Number(place.ticketPrice || 0) ? ` · ${formatMoney(place.ticketPrice)}` : ""
+        Number(place.ticketPrice || 0) ? ` · ${primaryMoney(place.ticketPrice, itemCurrency(place))}` : ""
       }`;
       return { kind, primary: place.name, secondary: [place.category, admission].filter(Boolean).join(" · ") };
     }
@@ -1312,7 +1412,7 @@ function renderItinerary() {
     view === "week" ? "active" : ""
   }">🗓️ Semana</button><button data-itinerary-view="overview" class="${
     view === "overview" ? "active" : ""
-  }">🧭 General</button></div></div><div class="day-strip">${
+  }">🧭 General</button></div>${addAction("itinerary", "Añadir actividad")}</div><div class="day-strip">${
     dates.map((item, index) =>
       `<button class="day-button ${item === date ? "active" : ""}" data-date="${item}"><small>${
         new Intl.DateTimeFormat("es-ES", { weekday: "short" }).format(new Date(`${item}T12:00`))
@@ -1333,7 +1433,9 @@ function renderPlaces() {
       icon("image")
     } Obtener fotos de Maps (${pendingPhotos.length})</button>`
     : "";
-  return `${toolbar(["Todos", ...CATEGORIES.place], photoAction)}<div class="grid place-grid">${
+  return `${
+    toolbar(["Todos", ...CATEGORIES.place], `${photoAction}${addAction("places", "Añadir lugar")}`)
+  }<div class="grid place-grid">${
     places.map((place) =>
       `<article class="card place-card"><div class="place-cover ${place.photoUrl ? "has-photo" : ""}">${
         place.photoUrl ? `<img class="place-cover-photo" src="${esc(place.photoUrl)}" alt="${esc(place.name)}">` : ""
@@ -1348,7 +1450,7 @@ function renderPlaces() {
       }</div><div class="place-body"><h3>${esc(place.name)}</h3><p>${
         esc(place.description || "Sin descripción")
       }</p><div class="place-admission">${badge(place.admission || "Entrada no indicada", "blue")}${
-        Number(place.ticketPrice || 0) ? `<strong>${formatMoney(place.ticketPrice)}</strong>` : ""
+        Number(place.ticketPrice || 0) ? itemMoney(place.ticketPrice, place) : ""
       }</div><div class="place-meta"><span>${icon("pin")} ${esc(place.city)} · ${
         esc(place.area)
       }</span><button class="btn btn-ghost icon-btn" data-edit="places:${place.id}">${
@@ -1856,6 +1958,9 @@ function initializeStayFields(root) {
   const checkOut = root.querySelector("#field-checkOutDate");
   const platform = root.querySelector("#field-platform");
   const link = root.querySelector("#field-link");
+  const price = root.querySelector("#field-price");
+  const paidAmount = root.querySelector("#field-paidAmount");
+  const paymentStatus = root.querySelector("#field-paymentStatus");
   checkIn?.addEventListener("change", () => {
     if (checkIn.value && (!checkOut.value || checkOut.value < checkIn.value)) {
       checkOut.value = addDaysIso(checkIn.value, 1);
@@ -1870,6 +1975,38 @@ function initializeStayFields(root) {
       : "https://…";
   });
   platform?.dispatchEvent(new Event("change"));
+  const syncPayment = (source) => {
+    const total = Math.max(0, Number(price?.value || 0));
+    const paid = Math.max(0, Number(paidAmount?.value || 0));
+    if (source === paymentStatus) {
+      if (paymentStatus.value === "Pagado") paidAmount.value = total;
+      if (paymentStatus.value === "Pendiente") paidAmount.value = 0;
+      return;
+    }
+    if (source === price && paymentStatus?.value === "Pagado") {
+      paidAmount.value = total;
+    } else if (paidAmount && paymentStatus) {
+      paymentStatus.value = paid > 0 && paid >= total && total > 0 ? "Pagado" : paid > 0 ? "Parcial" : "Pendiente";
+    }
+  };
+  price?.addEventListener("input", () => syncPayment(price));
+  paidAmount?.addEventListener("input", () => syncPayment(paidAmount));
+  paymentStatus?.addEventListener("change", () => syncPayment(paymentStatus));
+  if (paymentStatus?.value === "Pagado" && !Number(paidAmount?.value || 0)) syncPayment(paymentStatus);
+}
+
+function initializePurchaseFields(root) {
+  const actualPrice = root.querySelector("#field-actualPrice");
+  const status = root.querySelector("#field-status");
+  const purchaseDate = root.querySelector("#field-purchaseDate");
+  const syncPurchase = () => {
+    if (Number(actualPrice?.value || 0) <= 0 || !status) return;
+    status.value = "Comprado";
+    if (purchaseDate && !purchaseDate.value) purchaseDate.value = todayIso();
+  };
+  actualPrice?.addEventListener("input", syncPurchase);
+  actualPrice?.addEventListener("change", syncPurchase);
+  syncPurchase();
 }
 
 function initializeTransportFields(root) {
@@ -2106,6 +2243,13 @@ function toolbar(filters = [], extra = "") {
       : ""
   }${extra}</div>`;
 }
+function addAction(route, label, permission = PERMISSIONS.TRIP_EDIT) {
+  return session.can(permission)
+    ? `<button class="btn btn-primary section-add" type="button" data-add="${route}">${icon("plus")} ${
+      esc(label)
+    }</button>`
+    : "";
+}
 function filtered(items, keys) {
   const query = searchKey(ui.query);
   return items.filter((item) =>
@@ -2135,8 +2279,8 @@ function copyReferenceButton(collection, item, field = "reference") {
 
 function renderPurchases() {
   const items = filtered(store.collection("purchases"), ["product", "city", "store", "recipient"]);
-  const planned = items.reduce((s, i) => s + Number(i.estimatedPrice || 0), 0);
-  const spent = items.reduce((s, i) => s + Number(i.actualPrice || 0), 0);
+  const planned = items.reduce((sum, item) => sum + itemToPrimary(item.estimatedPrice, item), 0);
+  const spent = items.reduce((sum, item) => sum + itemToPrimary(item.actualPrice, item), 0);
   return `<div class="grid grid-3" style="margin-bottom:18px">${
     statCard(
       "bag",
@@ -2145,11 +2289,13 @@ function renderPurchases() {
       `${items.filter((i) => i.status === "Comprado").length} comprados`,
       "red",
     )
-  }${statCard("wallet", "Presupuesto previsto", formatMoney(planned), "Lista completa", "")}${
-    statCard("check", "Gastado", formatMoney(spent), `${formatMoney(Math.max(0, planned - spent))} disponible`, "")
-  }</div>${toolbar(["Todos", "Pendiente", "Encontrado", "Comprado", "No encontrado"])}${
+  }${statCard("wallet", "Presupuesto previsto", money(planned), "Lista completa", "", true)}${
+    statCard("check", "Gastado", money(spent), `${primaryMoney(Math.max(0, planned - spent))} disponible`, "", true)
+  }</div>${
+    toolbar(["Todos", "Pendiente", "Encontrado", "Comprado", "No encontrado"], addAction("purchases", "Añadir compra"))
+  }${
     table(
-      ["Producto", "Destino", "Estimado / máximo", "Prioridad", "Estado"],
+      ["Producto", "Destino", "Estimado / pagado", "Prioridad", "Estado"],
       items.map((i) =>
         `<tr><td><div class="purchase-product">${
           i.photo
@@ -2159,11 +2305,11 @@ function renderPurchases() {
           esc(i.recipient || "—")
         }</span></span></div></td><td>${esc(i.city || "—")}<span class="cell-sub">${
           esc(i.store || "")
-        }</span></td><td>${formatMoney(i.estimatedPrice)}<span class="cell-sub">máx. ${
-          formatMoney(i.maxBudget)
-        }</span></td><td>${badge(i.priority, i.priority === "Alta" ? "red" : "")}</td><td>${badge(i.status)}</td><td>${
-          actions("purchases", i.id)
-        }</td></tr>`
+        }</span></td><td>${itemMoney(i.estimatedPrice, i)}<span class="cell-sub">pagado ${
+          primaryMoney(i.actualPrice, itemCurrency(i))
+        } · máx. ${primaryMoney(i.maxBudget, itemCurrency(i))}</span></td><td>${
+          badge(i.priority, i.priority === "Alta" ? "red" : "")
+        }</td><td>${badge(i.status)}</td><td>${actions("purchases", i.id)}</td></tr>`
       ),
       "No hay compras",
     )
@@ -2171,28 +2317,44 @@ function renderPurchases() {
 }
 
 function taskRow(task) {
+  const overdue = task.status !== "Completada" && task.dueDate && task.dueDate < todayIso();
   return `<div class="list-item"><button class="check ${
     task.status === "Completada" ? "checked" : ""
-  }" data-toggle-task="${task.id}">${
-    task.status === "Completada" ? icon("check") : ""
-  }</button><div class="list-item-main ${task.status === "Completada" ? "done" : ""}"><strong>${
-    esc(task.title)
-  }</strong><small>${esc(task.category)}${task.dueDate ? ` · ${formatDate(task.dueDate)}` : ""}</small></div>${
+  }" data-toggle-task="${task.id}" aria-label="${
+    task.status === "Completada" ? "Marcar como pendiente" : "Marcar como completada"
+  }">${task.status === "Completada" ? icon("check") : ""}</button><div class="list-item-main ${
+    task.status === "Completada" ? "done" : ""
+  }"><strong>${esc(task.title)}</strong>${task.notes ? `<span>${esc(task.notes)}</span>` : ""}<small>${
+    esc(task.category || "Sin categoría")
+  } · ${esc(memberName(task.assigneeId))}${
+    task.dueDate ? ` · ${overdue ? "Venció" : "Límite"} ${formatDate(task.dueDate)}` : ""
+  }</small></div>${
     badge(task.priority, task.priority === "Alta" ? "red" : "")
   }<button class="btn btn-ghost icon-btn" data-edit="tasks:${task.id}">${icon("edit")}</button></div>`;
 }
 function renderTasks() {
-  const items = filtered(store.collection("tasks"), ["title", "category", "phase"]);
-  return `${toolbar(["Todos", "Antes", "Durante", "Después", "Pendiente", "Completada"])}<div class="grid grid-3">${
-    ["Antes", "Durante", "Después"].map((phase) =>
-      `<section class="card card-pad"><div class="card-head"><div><h2>${phase} del viaje</h2><p>${
-        items.filter((i) => i.phase === phase && i.status !== "Completada").length
-      } pendientes</p></div></div><div class="item-list">${
-        items.filter((i) => i.phase === phase).map(taskRow).join("") ||
-        emptyState("Nada por aquí", "No hay tareas en esta fase.")
-      }</div></section>`
-    ).join("")
-  }</div>`;
+  const enriched = store.collection("tasks").map((task) => ({
+    ...task,
+    assigneeName: memberName(task.assigneeId, ""),
+  }));
+  const items = filtered(enriched, ["title", "category", "notes", "assigneeName"])
+    .sort((a, b) =>
+      Number(a.status === "Completada") - Number(b.status === "Completada") ||
+      String(a.dueDate || "9999-12-31").localeCompare(String(b.dueDate || "9999-12-31")) ||
+      String(a.title).localeCompare(String(b.title), "es")
+    );
+  const pending = store.collection("tasks").filter((task) => task.status !== "Completada").length;
+  const overdue =
+    store.collection("tasks").filter((task) =>
+      task.status !== "Completada" && task.dueDate && task.dueDate < todayIso()
+    ).length;
+  return `${
+    toolbar(["Todos", "Pendiente", "Completada", "Alta", "Media", "Baja"], addAction("tasks", "Añadir TODO"))
+  }<section class="card card-pad"><div class="card-head"><div><h2>Lista TODO</h2><p>${pending} pendientes${
+    overdue ? ` · ${overdue} vencidas` : ""
+  }</p></div></div><div class="item-list todo-list">${
+    items.map(taskRow).join("") || emptyState("Todo al día", "No hay tareas que coincidan con la búsqueda.")
+  }</div></section>`;
 }
 
 function orderedNotes() {
@@ -2205,7 +2367,7 @@ function renderNotes() {
   const notes = orderedNotes().filter((note) =>
     !ui.query || searchKey(`${note.title} ${note.content}`).includes(searchKey(ui.query))
   );
-  return `${toolbar()}<div class="note-list">${
+  return `${toolbar([], addAction("notes", "Añadir nota"))}<div class="note-list">${
     notes.map((note, index) =>
       `<article class="card note-card"><div class="note-order"><span>${
         index + 1
@@ -2234,35 +2396,57 @@ function renderNotes() {
 }
 
 function renderBudget() {
-  const trip = store.activeTrip,
-    expenses = normalizedExpenses(),
-    purchases = store.collection("purchases"),
+  const expenses = normalizedExpenses(),
+    purchases = normalizedPurchases(),
     funds = store.collection("funds"),
-    summary = budgetSummary(trip, expenses, purchases, normalizedFunds()),
+    stays = normalizedStays(),
+    summary = budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays),
     percent = Math.min(100, summary.spent / Math.max(1, summary.budget) * 100),
-    totals = groupTotals(expenses, "category"),
+    totals = groupTotals(budgetChartItems(expenses, purchases, stays), "category"),
     max = Math.max(...totals.map(([, v]) => v), 1);
-  const items = filtered(store.collection("expenses"), ["title", "category", "city", "person"]);
+  const items = filtered(
+    store.collection("expenses").map((expense) => ({
+      ...expense,
+      paidByName: memberName(expense.paidByUserId, expense.person || "Fondo común"),
+    })),
+    ["title", "category", "city", "paidByName"],
+  );
   return `<div class="grid dashboard-grid"><div class="section-stack"><section class="card card-pad budget-hero"><div><span class="hero-eyebrow" style="color:var(--muted)">Fondos disponibles</span><div class="stat-value" style="font-size:36px">${
-    formatMoney(summary.remaining)
-  }</div><p style="color:var(--muted)">de ${formatMoney(summary.budget)} · base ${
-    formatMoney(summary.baseBudget)
-  } + aportaciones ${formatMoney(summary.funded)}</p><div class="legend"><span style="--dot:var(--primary)">Gastado ${
-    formatMoney(summary.spent)
+    money(summary.remaining)
+  }</div><p style="color:var(--muted)">de ${primaryMoney(summary.budget)} · base ${
+    primaryMoney(summary.baseBudget)
+  } + aportaciones ${primaryMoney(summary.funded)}</p><div class="legend"><span style="--dot:var(--primary)">Gastado ${
+    primaryMoney(summary.spent)
   }</span><span style="--dot:var(--warning)">Comprometido ${
-    formatMoney(summary.committed)
+    primaryMoney(summary.committed)
   }</span></div></div><div class="ring" style="--value:${percent}%"><div class="ring-label">${
     Math.round(percent)
   }%<small>utilizado</small></div></div></section><div class="grid grid-4">${
-    statCard("wallet", "Fondos aportados", formatMoney(summary.funded), `${funds.length} aportaciones`, "")
-  }${statCard("users", "Por persona", formatMoney(summary.perPerson), "Gasto real", "")}${
-    statCard("clock", "Pendiente de pagar", formatMoney(summary.committed), "Gastos previstos", "amber")
+    statCard("wallet", "Fondos aportados", money(summary.funded), `${funds.length} aportaciones`, "", true)
   }${
-    statCard("bag", "Compras previstas", formatMoney(summary.shoppingPlanned), "Aún no compradas", "red")
+    statCard(
+      "users",
+      "Por persona",
+      money(summary.perPerson),
+      `Incluye ${primaryMoney(summary.lodgingSpent)} de alojamiento`,
+      "",
+      true,
+    )
+  }${
+    statCard(
+      "clock",
+      "Pendiente de pagar",
+      money(summary.committed),
+      `${primaryMoney(summary.lodgingCommitted)} de alojamiento`,
+      "amber",
+      true,
+    )
+  }${
+    statCard("bag", "Compras previstas", money(summary.shoppingPlanned), "Aún no compradas", "red", true)
   }</div></div><section class="card card-pad"><div class="card-head"><div><h2>Distribución</h2><p>Gasto real por categoría</p></div></div><div class="chart-bars">${
     totals.map(([l, v]) =>
       `<div class="chart-column"><div class="chart-bar" style="height:${v / max * 100}%" data-value="${
-        formatMoney(v)
+        primaryMoney(v)
       }"></div><span class="chart-label">${esc(l)}</span></div>`
     ).join("")
   }</div></section></div><div class="section-title"><div><h2>Fondos del viaje</h2><p>Aportaciones que aumentan el presupuesto disponible</p></div>${
@@ -2276,22 +2460,24 @@ function renderBudget() {
         `<tr><td><span class="cell-main">${esc(fund.title)}</span><span class="cell-sub">${
           esc(fund.notes || "Aportación al viaje")
         }</span></td><td>${esc(fund.contributor)}</td><td>${formatDate(fund.date)}</td><td>${
-          formatMoney(fund.amount, fund.currency)
+          itemMoney(fund.amount, fund)
         }</td><td>${actions("funds", fund.id)}</td></tr>`
       ),
       "Todavía no hay fondos aportados",
     )
   }<div class="section-title"><div><h2>Movimientos</h2><p>Previsto frente a pagado</p></div></div>${
-    toolbar(["Todos", ...CATEGORIES.expense])
+    toolbar(["Todos", ...CATEGORIES.expense], addAction("budget", "Añadir gasto", PERMISSIONS.BUDGET_EDIT))
   }${
     table(
-      ["Concepto", "Fecha", "Previsto", "Pagado", "Estado"],
+      ["Concepto", "Fecha", "Pagado por", "Previsto", "Pagado", "Estado"],
       items.map((i) =>
         `<tr><td><span class="cell-main">${esc(i.title)}</span><span class="cell-sub">${esc(i.category)} · ${
           esc(i.city || "Sin ciudad")
-        }</span></td><td>${formatDate(i.date)}</td><td>${formatMoney(i.estimatedAmount, i.currency)}</td><td>${
-          formatMoney(i.actualAmount, i.currency)
-        }</td><td>${badge(i.paymentStatus)}</td><td>${actions("expenses", i.id)}</td></tr>`
+        }</span></td><td>${formatDate(i.date)}</td><td>${esc(i.paidByName)}</td><td>${
+          itemMoney(i.estimatedAmount, i)
+        }</td><td>${itemMoney(i.actualAmount, i)}</td><td>${badge(i.paymentStatus)}</td><td>${
+          actions("expenses", i.id)
+        }</td></tr>`
       ),
       "No hay movimientos",
     )
@@ -2314,7 +2500,10 @@ function renderStays() {
       )
     );
   return `${
-    toolbar(["Todos", "En persona", "Airbnb", "Booking", "Otros", "Pendiente", "Confirmada", "Cancelada"])
+    toolbar(
+      ["Todos", "En persona", "Airbnb", "Booking", "Otros", "Pendiente", "Confirmada", "Cancelada"],
+      addAction("stays", "Añadir alojamiento"),
+    )
   }<div class="grid grid-2">${
     items.map((i) => {
       const nights = stayNights(i);
@@ -2336,8 +2525,10 @@ function renderStays() {
         formatDate(i.checkOutDate)
       } · ${esc(i.checkOutTime || "—")}</strong></div></div><div class="stay-summary"><strong>${nights} ${
         nights === 1 ? "noche" : "noches"
-      }</strong><span>${formatMoney(i.price)}${
-        nights ? ` · ${formatMoney(Number(i.price || 0) / nights)} / noche` : ""
+      }</strong><span>${itemMoney(i.price, i)}${
+        nights ? ` · ${primaryMoney(Number(i.price || 0) / nights, itemCurrency(i))} / noche` : ""
+      }${
+        i.paymentStatus === "Parcial" ? ` · ${primaryMoney(stayBudgetAmounts(i).paid, itemCurrency(i))} pagado` : ""
       }</span></div>${
         i.cancellationDeadline
           ? `<div class="stay-cancellation ${cancellationExpired ? "expired" : ""}">${icon("clock")} ${
@@ -2377,9 +2568,9 @@ function renderTransport() {
         `${b.departureDate || "9999"}${b.departureTime || ""}`,
       )
     );
-  return `${toolbar(["Todos", ...CATEGORIES.transport])}${
+  return `${toolbar(["Todos", ...CATEGORIES.transport], addAction("transport", "Añadir transporte"))}${
     table(
-      ["Trayecto", "Salida", "Llegada", "Duración", "Reserva", "Estado"],
+      ["Trayecto", "Salida", "Llegada", "Duración", "Importe", "Reserva", "Estado"],
       items.map((i) =>
         `<tr><td><span class="cell-main">${esc(i.origin)} ${icon("arrow")} ${
           esc(i.destination)
@@ -2388,8 +2579,10 @@ function renderTransport() {
         }<span class="cell-sub">${esc(i.departureTime)}</span></td><td>${
           formatDate(i.arrivalDate)
         }<span class="cell-sub">${esc(i.arrivalTime)}</span></td><td>${durationLabel(i.duration)}</td><td>${
-          esc(i.reservation || "Sin referencia")
-        }${copyReferenceButton("transports", i, "reservation")}<span class="cell-sub">${esc(i.seat || "")}</span>${
+          itemMoney(i.price, i)
+        }</td><td>${esc(i.reservation || "Sin referencia")}${
+          copyReferenceButton("transports", i, "reservation")
+        }<span class="cell-sub">${esc(i.seat || "")}</span>${
           i.link ? `<a class="cell-link" href="${esc(i.link)}" target="_blank" rel="noreferrer">Abrir reserva</a>` : ""
         }</td><td>${badge(i.status)}</td><td>${actions("transports", i.id)}</td></tr>`
       ),
@@ -2400,15 +2593,24 @@ function renderTransport() {
 function renderReservations() {
   const items = filtered(store.collection("reservations"), ["title", "type", "reference"])
     .sort((a, b) => `${a.date || "9999"}${a.time || ""}`.localeCompare(`${b.date || "9999"}${b.time || ""}`));
-  return `${toolbar(["Todos", "Hotel", "Restaurante", "Museo", "Actividad", "Transporte", "Entrada"])}${
+  return `${
+    toolbar(
+      ["Todos", "Hotel", "Restaurante", "Museo", "Actividad", "Transporte", "Entrada"],
+      addAction("reservations", "Añadir reserva"),
+    )
+  }${
     table(
-      ["Reserva", "Fecha y hora", "Referencia", "Pago", "Estado", "Documento"],
+      ["Reserva", "Fecha y hora", "Referencia", "Importe", "Pago", "Estado", "Enlace"],
       items.map((i) =>
-        `<tr><td><span class="cell-main">${esc(i.title)}</span><span class="cell-sub">${esc(i.type)}</span></td><td>${
-          formatDate(i.date)
-        } · ${esc(i.time || "—")}</td><td>${esc(i.reference || "—")}${copyReferenceButton("reservations", i)}</td><td>${
-          badge(i.paymentStatus)
-        }</td><td>${badge(i.status)}</td><td>${
+        `<tr><td><span class="cell-main">${esc(i.title)}</span><span class="cell-sub">${
+          esc(visualLabel(i.type))
+        }</span></td><td>${formatDate(i.date)} · ${esc(i.time || "—")}</td><td>${esc(i.reference || "—")}${
+          copyReferenceButton("reservations", i)
+        }</td><td>${itemMoney(i.price, i)}${
+          Number(i.paidAmount || 0) > 0
+            ? `<span class="cell-sub">Pagado ${primaryMoney(i.paidAmount, itemCurrency(i))}</span>`
+            : ""
+        }</td><td>${badge(i.paymentStatus)}</td><td>${badge(i.status)}</td><td>${
           i.link
             ? `<a class="btn btn-ghost" target="_blank" rel="noreferrer" href="${esc(i.link)}">${
               icon("external")
@@ -2444,7 +2646,7 @@ function renderInspiration() {
         ui.inspirationStatus === "No vistos" ? "selected" : ""
       }>${esc(visualLabel("No vistos"))}</option><option value="Vistos" ${
         ui.inspirationStatus === "Vistos" ? "selected" : ""
-      }>${esc(visualLabel("Vistos"))}</option></select></div>`,
+      }>${esc(visualLabel("Vistos"))}</option></select></div>${addAction("inspiration", "Añadir inspiración")}`,
     )
   }<div class="grid grid-3 inspiration-grid">${
     items.map((item) => {
@@ -2485,32 +2687,15 @@ function renderInspiration() {
     )
   }</div>`;
 }
-function renderDocuments() {
-  const items = filtered(store.collection("documents"), ["name", "type", "reference"]);
-  return `<div class="insight warning" style="margin-bottom:18px">${
-    icon("alert")
-  }<div><strong>Privacidad primero</strong>Evita guardar números completos de pasaporte o datos sensibles. Los enlaces se comparten con los miembros autorizados del viaje.</div></div>${
-    toolbar(["Todos", "Billete", "Reserva", "PDF", "QR", "Seguro", "Pasaporte", "Confirmación"])
-  }<div class="grid grid-3">${
-    items.map((i) =>
-      `<section class="card card-pad"><div class="card-head"><span class="stat-icon red">${icon("file")}</span>${
-        badge(i.type)
-      }</div><h3>${esc(i.name)}</h3><p style="color:var(--muted)">Ref. ${esc(i.reference || "—")}${
-        i.expiryDate ? ` · hasta ${formatDate(i.expiryDate)}` : ""
-      }</p><div class="place-meta">${
-        i.link
-          ? `<a class="btn btn-secondary" target="_blank" rel="noreferrer" href="${esc(i.link)}">${
-            icon("external")
-          } Abrir</a>`
-          : `<span class="cell-sub">Sin enlace</span>`
-      }<button class="btn btn-ghost icon-btn" data-edit="documents:${i.id}">${icon("edit")}</button></div></section>`
-    ).join("") || emptyState("Sin documentos", "Añade enlaces a billetes, seguros o confirmaciones.")
-  }</div>`;
-}
-
 function renderSettings() {
   const trip = store.activeTrip, s = store.getState().settings;
   const members = store.collection("members"), invitations = store.collection("invitations");
+  const config = moneyConfig();
+  const activeRate = config.rates[rateKey(config.primary, config.secondary)];
+  const rateMeta = store.getState().exchangeRateMeta[rateKey(config.primary, config.secondary)] || {};
+  const updatedAt = rateMeta.fetchedAt
+    ? new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" }).format(new Date(rateMeta.fetchedAt))
+    : "Sin actualización automática";
   return `<div class="section-stack">
     <div class="grid dashboard-grid"><div class="section-stack">
       <section class="card card-pad"><div class="card-head"><div><h2>Viaje activo</h2><p>Configuración compartida con el equipo</p></div>${
@@ -2526,9 +2711,55 @@ function renderSettings() {
   }</strong></div><div><span class="cell-sub">TU ROL</span><strong>${
     visualLabel(ROLE_LABELS[session.currentMembership.role])
   }</strong></div></div></section>
+      <section class="card card-pad currency-settings"><div class="card-head"><div><h2>Monedas del viaje</h2><p>Configuración compartida con todos los miembros</p></div>${
+    badge(
+      trip.exchangeRateMode === "automatic" ? "Sincronizado" : "Manual",
+      trip.exchangeRateMode === "automatic" ? "green" : "blue",
+    )
+  }</div><form id="currency-settings-form" class="form-grid"><div class="field"><label>Moneda principal</label><select name="currency" data-primary-currency ${
+    session.can(PERMISSIONS.TRIP_EDIT) ? "" : "disabled"
+  }>${
+    MONEY_OPTIONS.map((option) =>
+      `<option value="${option.value}" ${option.value === trip.currency ? "selected" : ""}>${
+        esc(option.label)
+      }</option>`
+    ).join("")
+  }</select></div><div class="field"><label>Moneda secundaria</label><select name="secondaryCurrency" data-secondary-currency ${
+    session.can(PERMISSIONS.TRIP_EDIT) ? "" : "disabled"
+  }>${
+    MONEY_OPTIONS.map((option) =>
+      `<option value="${option.value}" ${option.value === trip.secondaryCurrency ? "selected" : ""}>${
+        esc(option.label)
+      }</option>`
+    ).join("")
+  }</select></div><div class="field"><label>Tipo de cambio</label><select name="exchangeRateMode" data-rate-mode ${
+    session.can(PERMISSIONS.TRIP_EDIT) ? "" : "disabled"
+  }><option value="automatic" ${
+    trip.exchangeRateMode === "automatic" ? "selected" : ""
+  }>Automático (Internet)</option><option value="manual" ${
+    trip.exchangeRateMode === "manual" ? "selected" : ""
+  }>Manual</option></select></div><div class="field"><label data-manual-rate-label>1 ${esc(trip.currency)} equivale a ${
+    esc(trip.secondaryCurrency)
+  }</label><input name="manualExchangeRate" data-manual-rate type="number" min="0.00000001" step="any" value="${trip.manualExchangeRate}" ${
+    trip.exchangeRateMode === "manual" && session.can(PERMISSIONS.TRIP_EDIT) ? "" : "disabled"
+  }></div><div class="field full exchange-status"><strong>${
+    activeRate
+      ? `1 ${esc(config.primary)} = ${Number(activeRate).toLocaleString("es-ES", { maximumFractionDigits: 8 })} ${
+        esc(config.secondary)
+      }`
+      : "Cambio no disponible"
+  }</strong><span>${
+    esc(rateMeta.warning || rateMeta.error || `${rateMeta.provider || "manual"} · ${updatedAt}`)
+  }</span></div>${
+    session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<div class="field full currency-actions"><button class="btn btn-primary" type="submit">Guardar monedas</button><button class="btn btn-secondary" type="button" data-refresh-rate ${
+        trip.exchangeRateMode === "automatic" ? "" : "disabled"
+      }>${icon("sync")} Actualizar ahora</button></div>`
+      : ""
+  }</form></section>
       <section class="card card-pad project-transfer"><div class="card-head"><div><h2>Exportar e importar proyecto</h2><p>Copia completa editable en formato JSON</p></div><span class="stat-icon amber">${
     icon("download")
-  }</span></div><p class="cell-sub">Incluye la configuración del viaje y todas sus actividades, lugares, tareas, notas, presupuesto, fondos, alojamientos, transportes, reservas, documentos e inspiración. No incluye cuentas, miembros, invitaciones ni contraseñas.</p><div class="project-transfer-actions"><button class="btn btn-secondary" type="button" data-export-project>${
+  }</span></div><p class="cell-sub">Incluye la configuración del viaje y todas sus actividades, lugares, tareas, notas, presupuesto, fondos, alojamientos, transportes, reservas e inspiración. No incluye cuentas, miembros, invitaciones ni contraseñas.</p><div class="project-transfer-actions"><button class="btn btn-secondary" type="button" data-export-project>${
     icon("download")
   } Exportar para ChatGPT</button>${
     session.can(PERMISSIONS.TRIP_EDIT)
@@ -2556,7 +2787,7 @@ function renderSettings() {
     visualLabel("Claro")
   }</option><option value="dark" ${s.theme === "dark" ? "selected" : ""}>${
     visualLabel("Oscuro")
-  }</option></select></div><div class="field full"><label>1 JPY equivale a EUR</label><input type="number" name="exchangeRate" step="0.0001" value="${s.exchangeRate}"></div><div class="field"><label>Inicio</label><input type="time" name="dayStart" value="${s.dayStart}"></div><div class="field"><label>Fin</label><input type="time" name="dayEnd" value="${s.dayEnd}"></div><div class="field full"><button class="btn btn-primary" type="submit">Guardar</button></div></form></section>
+  }</option></select></div><div class="field"><label>Inicio</label><input type="time" name="dayStart" value="${s.dayStart}"></div><div class="field"><label>Fin</label><input type="time" name="dayEnd" value="${s.dayEnd}"></div><div class="field full"><button class="btn btn-primary" type="submit">Guardar</button></div></form></section>
       <section class="card card-pad"><div class="card-head"><div><h2>Tu cuenta</h2><p>${
     esc(session.currentUser.email)
   }</p></div>${
@@ -2640,8 +2871,6 @@ function renderMore() {
 function openEditor(collection, idValue) {
   const required = collection === "expenses" || collection === "funds"
     ? PERMISSIONS.BUDGET_EDIT
-    : collection === "documents"
-    ? PERMISSIONS.DOCUMENT_UPLOAD
     : PERMISSIONS.TRIP_EDIT;
   if (!session.can(required)) {
     toast("Tu rol permite consultar, pero no modificar este viaje.", "error");
@@ -2659,7 +2888,6 @@ function openEditor(collection, idValue) {
     transports: ["transport", "Transporte"],
     reservations: ["reservation", "Reserva"],
     inspirations: ["inspiration", "Inspiración"],
-    documents: ["document", "Documento"],
   }[collection];
   if (!config) return;
   const item = idValue ? store.collection(collection).find((i) => i.id === idValue) : null;
@@ -2672,12 +2900,23 @@ function openEditor(collection, idValue) {
       duration: 60,
       markerIcon: "📍",
       admission: "No necesita entrada",
+      currency: store.activeTrip.currency,
     },
-    task: { phase: "Antes", priority: "Media", status: "Pendiente" },
-    purchase: { status: "Pendiente", priority: "Media", actualPrice: 0 },
+    task: { priority: "Media", status: "Pendiente", assigneeId: session.currentUser.id },
+    purchase: { status: "Pendiente", priority: "Media", actualPrice: 0, currency: store.activeTrip.currency },
     note: { order: Math.max(0, ...store.collection("notes").map((note) => Number(note.order || 0))) + 1 },
-    expense: { date: todayIso(), currency: "JPY", paymentStatus: "Pendiente", person: "Ambos" },
-    fund: { title: "Aportación", contributor: session.currentUser.name, date: todayIso(), currency: "JPY" },
+    expense: {
+      date: todayIso(),
+      currency: store.activeTrip.currency,
+      paymentStatus: "Pendiente",
+      paidByUserId: session.currentUser.id,
+    },
+    fund: {
+      title: "Aportación",
+      contributor: session.currentUser.name,
+      date: todayIso(),
+      currency: store.activeTrip.currency,
+    },
     stay: {
       checkInDate: activeDate(),
       checkOutDate: addDaysIso(activeDate(), 1),
@@ -2687,11 +2926,21 @@ function openEditor(collection, idValue) {
       bookingStatus: "Pendiente",
       paymentStatus: "Pendiente",
       luggageStorage: "Por confirmar",
+      currency: store.activeTrip.currency,
     },
-    transport: { departureDate: activeDate(), arrivalDate: activeDate(), status: "Por reservar" },
-    reservation: { date: activeDate(), status: "Pendiente", paymentStatus: "Pendiente" },
+    transport: {
+      departureDate: activeDate(),
+      arrivalDate: activeDate(),
+      status: "Por reservar",
+      currency: store.activeTrip.currency,
+    },
+    reservation: {
+      date: activeDate(),
+      status: "Pendiente",
+      paymentStatus: "Pendiente",
+      currency: store.activeTrip.currency,
+    },
     inspiration: {},
-    document: { type: "Confirmación" },
   }[type] || {};
   const editorValues = item && type === "activity" && !item.activityKind
     ? { ...item, activityKind: activityKindOf(item) }
@@ -2702,6 +2951,10 @@ function openEditor(collection, idValue) {
     values: editorValues,
     dangerLabel: item ? "Eliminar" : "",
     onSubmit: async (values) => {
+      if (type === "purchase" && Number(values.actualPrice || 0) > 0) {
+        values.status = "Comprado";
+        values.purchaseDate ||= todayIso();
+      }
       const requiredLink = { Lugar: "placeId", Hospedaje: "stayId", Transporte: "transportId" }[values.activityKind];
       if (type === "activity" && requiredLink && !values[requiredLink]) {
         throw new Error(
@@ -2727,6 +2980,14 @@ function openEditor(collection, idValue) {
       }
       if (type === "stay" && values.cancellationDeadline && values.cancellationDeadline > values.checkInDate) {
         throw new Error("La fecha límite de cancelación no puede ser posterior a la entrada.");
+      }
+      if (type === "stay") {
+        const total = Number(values.price || 0);
+        const paid = Number(values.paidAmount || 0);
+        if (paid > total) throw new Error("El importe pagado no puede superar el precio total del alojamiento.");
+        if (values.paymentStatus === "Pagado") values.paidAmount = total;
+        else if (paid > 0) values.paymentStatus = paid >= total && total > 0 ? "Pagado" : "Parcial";
+        else if (values.paymentStatus !== "Pagado") values.paymentStatus = "Pendiente";
       }
       if (
         type === "transport" && values.arrivalDate &&
@@ -2754,6 +3015,8 @@ function openEditor(collection, idValue) {
       ? initializeActivityLinks
       : type === "stay"
       ? initializeStayFields
+      : type === "purchase"
+      ? initializePurchaseFields
       : type === "transport"
       ? initializeTransportFields
       : undefined,
@@ -2835,7 +3098,6 @@ function bindCommon() {
         transport: "transports",
         reservations: "reservations",
         inspiration: "inspirations",
-        documents: "documents",
       };
       openEditor(map[button.dataset.add]);
     })
@@ -2978,9 +3240,76 @@ function bindRoute() {
   app.querySelector("#settings-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
-    store.update((s) => Object.assign(s.settings, { ...values, exchangeRate: Number(values.exchangeRate) }));
+    store.update((s) => Object.assign(s.settings, values));
     toast("Preferencias guardadas");
     render();
+  });
+  const rateMode = app.querySelector("[data-rate-mode]");
+  const manualRate = app.querySelector("[data-manual-rate]");
+  const primaryCurrency = app.querySelector("[data-primary-currency]");
+  const secondaryCurrency = app.querySelector("[data-secondary-currency]");
+  const manualRateLabel = app.querySelector("[data-manual-rate-label]");
+  const canEditCurrencies = session.can(PERMISSIONS.TRIP_EDIT);
+  const initialCurrencyPair = `${primaryCurrency?.value}:${secondaryCurrency?.value}`;
+  const updateCurrencyFields = () => {
+    if (manualRate) {
+      const isManual = rateMode?.value === "manual";
+      manualRate.disabled = !isManual || !canEditCurrencies;
+      manualRate.required = Boolean(isManual && canEditCurrencies);
+    }
+    if (manualRateLabel && primaryCurrency && secondaryCurrency) {
+      manualRateLabel.textContent = `1 ${primaryCurrency.value} equivale a ${secondaryCurrency.value}`;
+    }
+  };
+  rateMode?.addEventListener("change", () => {
+    updateCurrencyFields();
+  });
+  [primaryCurrency, secondaryCurrency].forEach((select) =>
+    select?.addEventListener("change", () => {
+      if (manualRate && rateMode?.value === "manual") {
+        const currentPair = `${primaryCurrency.value}:${secondaryCurrency.value}`;
+        if (currentPair !== initialCurrencyPair) manualRate.value = "";
+      }
+      updateCurrencyFields();
+    })
+  );
+  updateCurrencyFields();
+  app.querySelector("#currency-settings-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    if (values.currency === values.secondaryCurrency) {
+      return toast("La moneda principal y la secundaria deben ser diferentes.", "error");
+    }
+    const suppliedManualRate = Number(values.manualExchangeRate);
+    if (values.exchangeRateMode === "manual" && (!Number.isFinite(suppliedManualRate) || suppliedManualRate <= 0)) {
+      return toast("Introduce un tipo de cambio manual válido para las monedas seleccionadas.", "error");
+    }
+    try {
+      await apiClient.patch(`/trips/${store.activeTrip.id}`, {
+        ...values,
+        manualExchangeRate: values.exchangeRateMode === "manual"
+          ? suppliedManualRate
+          : Number(store.activeTrip.manualExchangeRate),
+        version: store.activeTrip.version,
+      });
+      const payload = await store.loadTrip(store.activeTrip.id, handleRemoteChange);
+      session.selectTrip(payload);
+      toast("Configuración monetaria actualizada");
+      render();
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
+  app.querySelector("[data-refresh-rate]")?.addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try {
+      await store.refreshExchangeRates(true);
+      toast("Tipo de cambio actualizado");
+      render();
+    } catch (error) {
+      event.currentTarget.disabled = false;
+      toast(error.message, "error");
+    }
   });
   app.querySelector("[data-edit-trip]")?.addEventListener("click", editTrip);
   app.querySelector("[data-export-project]")?.addEventListener("click", exportProject);
@@ -3091,11 +3420,11 @@ function editTrip() {
       { name: "startDate", label: "Inicio", type: "date", required: true },
       { name: "endDate", label: "Fin", type: "date", required: true },
       { name: "travelers", label: "Viajeros", type: "number", min: 1 },
-      { name: "budget", label: "Presupuesto (¥)", type: "number", min: 0 },
+      { name: "budget", label: `Presupuesto original (${trip.budgetCurrency})`, type: "number", min: 0 },
     ],
     values: trip,
     onSubmit: async (values) => {
-      await apiClient.patch(`/trips/${trip.id}`, { ...values, currency: trip.currency, version: trip.version });
+      await apiClient.patch(`/trips/${trip.id}`, { ...values, version: trip.version });
       const payload = await store.loadTrip(trip.id, handleRemoteChange);
       session.selectTrip(payload);
       ui.selectedDate = "";

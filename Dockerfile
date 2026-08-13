@@ -29,4 +29,4 @@ EXPOSE 4173
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["deno", "eval", "const response = await fetch('http://127.0.0.1:4173/api/health'); if (!response.ok) Deno.exit(1)"]
 
-CMD ["deno", "run", "--cached-only", "--allow-net=0.0.0.0:4173,maps.app.goo.gl:443", "--allow-read=/app", "--allow-write=/app/data", "--allow-env=PORT,TABI_DATABASE_PATH,TABI_GOOGLE_MAPS_API_KEY,TABI_GOOGLE_MAPS_MAP_ID,TABI_PUBLIC_ORIGIN,TABI_SECURE_COOKIE,TABI_COMMIT_SHA", "server.js"]
+CMD ["deno", "run", "--cached-only", "--allow-net=0.0.0.0:4173,maps.app.goo.gl:443,api.frankfurter.dev:443", "--allow-read=/app", "--allow-write=/app/data", "--allow-env=PORT,TABI_DATABASE_PATH,TABI_GOOGLE_MAPS_API_KEY,TABI_GOOGLE_MAPS_MAP_ID,TABI_PUBLIC_ORIGIN,TABI_SECURE_COOKIE,TABI_COMMIT_SHA", "server.js"]

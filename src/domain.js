@@ -148,17 +148,35 @@ export function sharedInspirationLink(...values) {
   return null;
 }
 
-export function budgetSummary(trip, expenses, purchases = [], funds = []) {
-  const spent = expenses.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0) +
-    purchases.filter((item) => item.status === "Comprado").reduce(
-      (sum, item) => sum + Number(item.actualPrice || 0),
-      0,
-    );
-  const committed = expenses.reduce(
+export function stayBudgetAmounts(stay) {
+  if (stay?.bookingStatus === "Cancelada") return { paid: 0, pending: 0, total: 0 };
+  const total = Math.max(0, Number(stay?.price || 0));
+  const enteredPaid = Math.max(0, Number(stay?.paidAmount || 0));
+  // Los alojamientos antiguos solo guardaban el estado, no el importe abonado.
+  const paid = stay?.paymentStatus === "Pagado" ? total : Math.min(total, enteredPaid);
+  return { paid, pending: Math.max(0, total - paid), total };
+}
+
+export function budgetSummary(trip, expenses, purchases = [], funds = [], stays = []) {
+  const expenseSpent = expenses.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0);
+  // Un precio real indica una compra efectuada aunque un dato importado conserve un estado antiguo.
+  const shoppingSpent = purchases.reduce((sum, item) => sum + Math.max(0, Number(item.actualPrice || 0)), 0);
+  const lodging = stays.reduce((result, stay) => {
+    const amounts = stayBudgetAmounts(stay);
+    result.spent += amounts.paid;
+    result.committed += amounts.pending;
+    result.total += amounts.total;
+    return result;
+  }, { spent: 0, committed: 0, total: 0 });
+  const spent = expenseSpent + shoppingSpent + lodging.spent;
+  const expenseCommitted = expenses.reduce(
     (sum, item) => sum + Math.max(0, Number(item.estimatedAmount || 0) - Number(item.actualAmount || 0)),
     0,
   );
-  const shoppingPlanned = purchases.filter((item) => item.status !== "Comprado" && item.status !== "No encontrado")
+  const committed = expenseCommitted + lodging.committed;
+  const shoppingPlanned = purchases.filter((item) =>
+    item.status !== "Comprado" && item.status !== "No encontrado" && Number(item.actualPrice || 0) <= 0
+  )
     .reduce((sum, item) => sum + Number(item.estimatedPrice || 0), 0);
   const baseBudget = Number(trip?.budget || 0);
   const funded = funds.reduce((sum, item) => sum + Number(item.amount || 0), 0);
@@ -170,6 +188,9 @@ export function budgetSummary(trip, expenses, purchases = [], funds = []) {
     spent,
     committed,
     shoppingPlanned,
+    lodgingSpent: lodging.spent,
+    lodgingCommitted: lodging.committed,
+    lodgingTotal: lodging.total,
     remaining: budget - spent,
     projected: spent + committed + shoppingPlanned,
     perPerson: spent / Math.max(1, Number(trip?.travelers || 1)),

@@ -1,3 +1,6 @@
+import { formatCurrency, moneyAmounts } from "./currency.js";
+import { statusVisual } from "./visuals.js";
+
 const paths = {
   dashboard:
     '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',
@@ -36,6 +39,7 @@ const paths = {
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
   upload: '<path d="M12 21V9M7 14l5-5 5 5M5 3h14"/>',
+  sync: '<path d="M20 7h-5V2M4 17h5v5M19 12a7 7 0 0 0-12-5L4 10M5 12a7 7 0 0 0 12 5l3-3"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
   external: '<path d="M14 3h7v7M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>',
@@ -58,41 +62,6 @@ export const searchKey = (value = "") =>
   String(value).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("es").trim();
 
 const visualSymbols = Object.freeze({
-  todos: "✦",
-  pendiente: "⏳",
-  planeado: "🗓️",
-  visitado: "✅",
-  realizado: "✅",
-  realizada: "✅",
-  completada: "✅",
-  completado: "✅",
-  pagado: "✅",
-  comprado: "✅",
-  confirmada: "✅",
-  confirmado: "✅",
-  activa: "🟢",
-  encontrado: "👀",
-  visto: "👁️",
-  vistos: "👁️",
-  "no visto": "👁️‍🗨️",
-  "no vistos": "👁️‍🗨️",
-  sincronizado: "🔄",
-  parcial: "◐",
-  "por reservar": "🕒",
-  descartado: "⛔",
-  cancelada: "⛔",
-  cancelado: "⛔",
-  revocada: "⛔",
-  expirada: "⌛",
-  consumida: "✓",
-  "no encontrado": "❌",
-  imprescindible: "⭐",
-  alta: "🔴",
-  media: "🟡",
-  baja: "🟢",
-  antes: "⏮️",
-  durante: "✈️",
-  después: "⏭️",
   "en persona": "🤝",
   airbnb: "🏠",
   booking: "🏨",
@@ -112,12 +81,9 @@ const visualSymbols = Object.freeze({
   alojamiento: "🛏️",
   transporte: "🚆",
   templo: "⛩️",
-  restaurante: "🍜",
   tienda: "🛍️",
-  museo: "🏛️",
   parque: "🌿",
   mirador: "🌇",
-  actividad: "🎟️",
   cafetería: "☕",
   vuelos: "✈️",
   hoteles: "🏨",
@@ -144,14 +110,7 @@ const visualSymbols = Object.freeze({
   electrónica: "🔌",
   coleccionismo: "🧸",
   cosmética: "🧴",
-  billete: "🎫",
   reserva: "🎟️",
-  pdf: "📄",
-  qr: "▣",
-  seguro: "🛡️",
-  pasaporte: "🛂",
-  confirmación: "✅",
-  entrada: "🎟️",
   consejos: "💡",
   lugares: "📍",
   propietario: "👑",
@@ -175,7 +134,7 @@ const visualSymbols = Object.freeze({
 
 export const visualSymbol = (value = "") => {
   const key = String(value).trim().toLocaleLowerCase("es");
-  return visualSymbols[key] || visualSymbols[key.split(/\s*[·—]\s*/)[0]] || "";
+  return statusVisual(value)?.icon || visualSymbols[key] || visualSymbols[key.split(/\s*[·—]\s*/)[0]] || "";
 };
 export const visualLabel = (value = "") => {
   const symbol = visualSymbol(value);
@@ -187,9 +146,20 @@ export const formatDate = (date, options = {}) => {
   if (Number.isNaN(parsed.getTime())) return "—";
   return new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", ...options }).format(parsed);
 };
-export const formatMoney = (amount, currency = "JPY") =>
-  new Intl.NumberFormat("es-ES", { style: "currency", currency, maximumFractionDigits: currency === "JPY" ? 0 : 2 })
-    .format(Number(amount || 0));
+export const formatMoney = formatCurrency;
+export function moneyPair(amount, originalCurrency, config, { secondary = true } = {}) {
+  const values = moneyAmounts(amount, originalCurrency, config);
+  if (values.primaryAmount === null) {
+    return `<span class="money-pair"><strong>${
+      esc(formatCurrency(amount, values.source))
+    }</strong><small>Sin cambio disponible</small></span>`;
+  }
+  return `<span class="money-pair"><strong>${esc(formatCurrency(values.primaryAmount, config.primary))}</strong>${
+    secondary && values.secondaryAmount !== null
+      ? `<small>≈ ${esc(formatCurrency(values.secondaryAmount, config.secondary))}</small>`
+      : ""
+  }</span>`;
+}
 export const fullDate = (date) =>
   date
     ? new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long" }).format(
@@ -197,13 +167,14 @@ export const fullDate = (date) =>
     )
     : "";
 export const statusTone = (status = "") =>
-  /pagado|comprado|visitado|confirmad|completad|realizad|activa|consumida/i.test(status)
+  statusVisual(status)?.tone ||
+  (/pagado|comprado|visitado|confirmad|completad|realizad|activa|consumida/i.test(status)
     ? "green"
     : /pendiente|por reservar|parcial|expirada/i.test(status)
     ? "amber"
     : /descartado|no encontrado|cancel|revocada/i.test(status)
     ? "red"
-    : "blue";
+    : "blue");
 export const badge = (label, tone) => {
   const symbol = visualSymbol(label);
   return `<span class="badge ${tone || statusTone(label)}">${

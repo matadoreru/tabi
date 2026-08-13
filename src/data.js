@@ -11,7 +11,7 @@ const id = (prefix, value) => `${prefix}-${value}`;
 export function createSeed() {
   return {
     version: 1,
-    settings: { theme: "system", exchangeRate: 0.0058, defaultCurrency: "JPY", dayStart: "08:00", dayEnd: "22:00" },
+    settings: { theme: "system", dayStart: "08:00", dayEnd: "22:00" },
     trips: [{
       id: "trip-japan",
       name: "Japón 2026",
@@ -22,6 +22,9 @@ export function createSeed() {
       travelers: 2,
       budget: 680000,
       currency: "JPY",
+      secondaryCurrency: "EUR",
+      exchangeRateMode: "automatic",
+      budgetCurrency: "JPY",
     }],
     activeTripId: "trip-japan",
     places: [
@@ -217,7 +220,6 @@ export function createSeed() {
         id: id("task", 1),
         tripId: "trip-japan",
         title: "Reservar Museo Ghibli",
-        phase: "Antes",
         category: "Reservas",
         priority: "Alta",
         dueDate: "2026-09-10",
@@ -228,7 +230,6 @@ export function createSeed() {
         id: id("task", 2),
         tripId: "trip-japan",
         title: "Comprar eSIM",
-        phase: "Antes",
         category: "Tecnología",
         priority: "Media",
         dueDate: "2026-10-05",
@@ -239,7 +240,6 @@ export function createSeed() {
         id: id("task", 3),
         tripId: "trip-japan",
         title: "Descargar mapas offline",
-        phase: "Antes",
         category: "Tecnología",
         priority: "Media",
         dueDate: "2026-10-08",
@@ -250,7 +250,6 @@ export function createSeed() {
         id: id("task", 4),
         tripId: "trip-japan",
         title: "Activar JR tickets",
-        phase: "Durante",
         category: "Documentación",
         priority: "Alta",
         dueDate: "2026-10-11",
@@ -448,16 +447,6 @@ export function createSeed() {
       status: "Confirmada",
       link: "",
       notes: "Llegar 15 minutos antes",
-    }],
-    documents: [{
-      id: id("doc", 1),
-      tripId: "trip-japan",
-      name: "Seguro de viaje",
-      type: "Seguro",
-      reference: "POL-JP-2026",
-      link: "",
-      expiryDate: "2026-10-25",
-      notes: "Cobertura médica y cancelación",
     }],
   };
 }

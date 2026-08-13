@@ -28,7 +28,12 @@ Deno.test("normaliza búsquedas sin distinguir mayúsculas ni tildes", () => {
 Deno.test("los estados y filtros combinan símbolos reconocibles con texto", () => {
   assertEquals(visualLabel("Pendiente"), "⏳ Pendiente");
   assertEquals(visualLabel("Airbnb"), "🏠 Airbnb");
-  assertEquals(visualSymbol("Confirmada"), "✅");
+  assertEquals(visualSymbol("Confirmada"), "🔒");
+  assertEquals(visualSymbol("Parcial"), "🌓");
+  assertEquals(visualSymbol("Hotel"), "🏨");
+  assertEquals(visualSymbol("Actividad"), "🎯");
+  assertEquals(visualSymbol("Entrada"), "🎟️");
+  if (visualSymbol("Visto") === visualSymbol("No visto")) throw new Error("Visto y No visto deben distinguirse");
   assertEquals(visualLabel("Valor personalizado"), "Valor personalizado");
 });
 
@@ -90,5 +95,21 @@ Deno.test("la interfaz integra notas, fotos y un asa de arrastre inequívoca", a
   }
   if (source.includes("⋮⋮") || !source.includes('icon("grip")')) {
     throw new Error("El asa de actividades debe usar una única columna de puntos");
+  }
+});
+
+Deno.test("TODO es una lista única con responsable e información", async () => {
+  const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (!source.includes("<h2>Lista TODO</h2>")) throw new Error("TODO debe mostrarse como una lista única");
+  if (!source.includes('name: "assigneeId"')) throw new Error("Las tareas deben admitir responsable");
+  if (!source.includes('label: "Información"')) throw new Error("Las tareas deben mostrar su información");
+  if (source.includes('name: "phase"')) throw new Error("El formulario no debe separar tareas por fases del viaje");
+});
+
+Deno.test("las acciones principales viven junto a su contenido y Documentos no existe", async () => {
+  const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (!source.includes("function addAction(")) throw new Error("Falta el patrón común de acciones de sección");
+  if (source.includes('["documents", "Documentos"') || source.includes("renderDocuments")) {
+    throw new Error("La sección Documentos debe estar eliminada");
   }
 });
