@@ -157,7 +157,16 @@ export function stayBudgetAmounts(stay) {
   return { paid, pending: Math.max(0, total - paid), total };
 }
 
-export function budgetSummary(trip, expenses, purchases = [], funds = [], stays = []) {
+export function transportBudgetAmounts(transport) {
+  if (transport?.status === "Cancelado") return { paid: 0, pending: 0, total: 0 };
+  const total = Math.max(0, Number(transport?.price || 0));
+  const enteredPaid = Math.max(0, Number(transport?.paidAmount || 0));
+  const legacyCompleted = transport?.status === "Realizado" && transport?.paymentStatus === undefined;
+  const paid = transport?.paymentStatus === "Pagado" || legacyCompleted ? total : Math.min(total, enteredPaid);
+  return { paid, pending: Math.max(0, total - paid), total };
+}
+
+export function budgetSummary(trip, expenses, purchases = [], funds = [], stays = [], transports = []) {
   const expenseSpent = expenses.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0);
   // Un precio real indica una compra efectuada aunque un dato importado conserve un estado antiguo.
   const shoppingSpent = purchases.reduce((sum, item) => sum + Math.max(0, Number(item.actualPrice || 0)), 0);
@@ -168,12 +177,19 @@ export function budgetSummary(trip, expenses, purchases = [], funds = [], stays 
     result.total += amounts.total;
     return result;
   }, { spent: 0, committed: 0, total: 0 });
-  const spent = expenseSpent + shoppingSpent + lodging.spent;
+  const transportation = transports.reduce((result, transport) => {
+    const amounts = transportBudgetAmounts(transport);
+    result.spent += amounts.paid;
+    result.committed += amounts.pending;
+    result.total += amounts.total;
+    return result;
+  }, { spent: 0, committed: 0, total: 0 });
+  const spent = expenseSpent + shoppingSpent + lodging.spent + transportation.spent;
   const expenseCommitted = expenses.reduce(
     (sum, item) => sum + Math.max(0, Number(item.estimatedAmount || 0) - Number(item.actualAmount || 0)),
     0,
   );
-  const committed = expenseCommitted + lodging.committed;
+  const committed = expenseCommitted + lodging.committed + transportation.committed;
   const shoppingPlanned = purchases.filter((item) =>
     item.status !== "Comprado" && item.status !== "No encontrado" && Number(item.actualPrice || 0) <= 0
   )
@@ -191,6 +207,9 @@ export function budgetSummary(trip, expenses, purchases = [], funds = [], stays 
     lodgingSpent: lodging.spent,
     lodgingCommitted: lodging.committed,
     lodgingTotal: lodging.total,
+    transportSpent: transportation.spent,
+    transportCommitted: transportation.committed,
+    transportTotal: transportation.total,
     remaining: budget - spent,
     projected: spent + committed + shoppingPlanned,
     perPerson: spent / Math.max(1, Number(trip?.travelers || 1)),

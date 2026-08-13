@@ -407,6 +407,7 @@ export function modal({
     options.forEach((option) =>
       option.addEventListener("click", () => {
         valueInput.value = option.dataset.emoji;
+        valueInput.dispatchEvent(new Event("input", { bubbles: true }));
         preview.textContent = option.dataset.emoji;
         options.forEach((item) => item.setAttribute("aria-selected", String(item === option)));
       })

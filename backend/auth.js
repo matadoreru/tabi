@@ -44,7 +44,7 @@ export async function register(input) {
   const passwordRecord = await hashPassword(password);
   const timestamp = now();
   const id = newId("usr");
-  db.prepare(
+  await db.prepare(
     "INSERT INTO users(id,name,username,email,password_hash,password_salt,password_algorithm,avatar_url,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
   )
     .run(
@@ -59,7 +59,7 @@ export async function register(input) {
       timestamp,
       timestamp,
     );
-  return createSession(db.prepare("SELECT * FROM users WHERE id = ?").get(id));
+  return createSession(await db.prepare("SELECT * FROM users WHERE id = ?").get(id));
 }
 
 export async function login(input) {
@@ -68,7 +68,7 @@ export async function login(input) {
   if (!identity || identity.length > 254) {
     throw new HttpError(422, "INVALID_IDENTITY", "Introduce tu usuario o email.");
   }
-  const user = db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE")
+  const user = await db.prepare("SELECT * FROM users WHERE lower(email) = lower(?) OR lower(username) = lower(?)")
     .get(identity, identity);
   if (!user || !(await verifyPassword(password, user))) {
     throw new HttpError(401, "INVALID_CREDENTIALS", "Usuario, email o contraseña incorrectos.");
@@ -81,7 +81,9 @@ async function createSession(user) {
   const tokenHash = await sha256(token);
   const timestamp = now();
   const expiresAt = new Date(Date.now() + CONFIG.sessionDays * 86400000).toISOString();
-  db.prepare("INSERT INTO sessions(id,token_hash,user_id,created_at,expires_at,last_seen_at) VALUES (?,?,?,?,?,?)")
+  await db.prepare(
+    "INSERT INTO sessions(id,token_hash,user_id,created_at,expires_at,last_seen_at) VALUES (?,?,?,?,?,?)",
+  )
     .run(newId("ses"), tokenHash, user.id, timestamp, expiresAt, timestamp);
   return { user: publicUser(user), token, expiresAt };
 }
@@ -92,32 +94,32 @@ export async function currentUser(request, required = true) {
     if (required) throw new HttpError(401, "AUTH_REQUIRED", "Debes iniciar sesión.");
     return null;
   }
-  const row = db.prepare(
+  const row = await db.prepare(
     "SELECT u.*, s.id AS session_id, s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
   ).get(await sha256(token), now());
   if (!row) {
     if (required) throw new HttpError(401, "SESSION_EXPIRED", "La sesión ha caducado.");
     return null;
   }
-  db.prepare("UPDATE sessions SET last_seen_at=? WHERE id=?").run(now(), row.session_id);
+  await db.prepare("UPDATE sessions SET last_seen_at=? WHERE id=?").run(now(), row.session_id);
   return { ...publicUser(row), sessionId: row.session_id };
 }
 
 export async function logout(request) {
   const token = cookies(request)[CONFIG.sessionCookie];
-  if (token) db.prepare("DELETE FROM sessions WHERE token_hash=?").run(await sha256(token));
+  if (token) await db.prepare("DELETE FROM sessions WHERE token_hash=?").run(await sha256(token));
 }
 
 export async function changePassword(user, input) {
-  const row = db.prepare("SELECT * FROM users WHERE id=?").get(user.id);
+  const row = await db.prepare("SELECT * FROM users WHERE id=?").get(user.id);
   if (!await verifyPassword(String(input.currentPassword || ""), row)) {
     throw new HttpError(422, "WRONG_PASSWORD", "La contraseña actual no es correcta.");
   }
   validateCredentials({ email: row.email, password: input.newPassword });
   const passwordRecord = await hashPassword(input.newPassword);
-  db.prepare("UPDATE users SET password_hash=?,password_salt=?,password_algorithm=?,updated_at=? WHERE id=?")
+  await db.prepare("UPDATE users SET password_hash=?,password_salt=?,password_algorithm=?,updated_at=? WHERE id=?")
     .run(passwordRecord.hash, passwordRecord.salt, passwordRecord.algorithm, now(), user.id);
-  db.prepare("DELETE FROM sessions WHERE user_id=? AND id<>?").run(user.id, user.sessionId);
+  await db.prepare("DELETE FROM sessions WHERE user_id=? AND id<>?").run(user.id, user.sessionId);
 }
 
 export function authCookie(result) {

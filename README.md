@@ -1,15 +1,15 @@
 # Actualizar Docker
 
 ```bash
-docker compose pull app
-docker compose up -d app
+docker compose pull
+docker compose up -d
 docker compose ps
 ```
 
 # Tabi · planificador colaborativo de viajes
 
 Aplicación web multiusuario para organizar itinerarios, lugares, tareas, compras, presupuesto, alojamientos, transporte
-y reservas. Mantiene la interfaz PWA original, pero los datos compartidos se almacenan ahora en SQLite detrás de una API
+y reservas. Mantiene la interfaz PWA original, pero los datos compartidos se almacenan en PostgreSQL detrás de una API
 autenticada.
 
 Las tareas se gestionan como una sola lista TODO, con responsable, prioridad, fecha límite, estado e información libre.
@@ -22,21 +22,22 @@ totales.
 importe y moneda originales; cambiar la moneda principal solo modifica cómo se calculan y presentan los resúmenes. Al
 guardar un importe, la API añade una instantánea del cambio utilizado como referencia histórica y respaldo.
 
-El modo automático consulta Frankfurter exclusivamente desde el backend, guarda el resultado en SQLite durante 12 horas
-y reutiliza el último valor conocido si el proveedor no responde. No requiere ni expone claves. El modo manual conserva
-un cambio compartido entre la moneda principal y secundaria. Los tipos automáticos son valores de referencia diarios, no
-cotizaciones para operaciones financieras.
+El modo automático consulta Frankfurter exclusivamente desde el backend, guarda el resultado en PostgreSQL durante 12
+horas y reutiliza el último valor conocido si el proveedor no responde. No requiere ni expone claves. El modo manual
+conserva un cambio compartido entre la moneda principal y secundaria. Los tipos automáticos son valores de referencia
+diarios, no cotizaciones para operaciones financieras.
 
 ## Ejecutar
 
-Requiere Deno 2.9 o posterior. No hay paquetes que instalar.
+Requiere Deno 2.9 o posterior y un PostgreSQL accesible. Deno descarga el driver declarado en `deno.json`.
 
 ```bash
 deno task dev
 ```
 
-Abre [http://localhost:4173](http://localhost:4173). La primera ejecución crea `data/tabi.sqlite` y aplica
-automáticamente las migraciones pendientes.
+PostgreSQL debe estar disponible con las variables `TABI_POSTGRES_*`. La primera ejecución crea las tablas y aplica
+automáticamente las migraciones pendientes. La configuración Docker y el traslado desde SQLite están en
+[DEPLOY.md](./DEPLOY.md).
 
 ```bash
 deno task test
@@ -45,10 +46,10 @@ deno task test
 Para producción:
 
 ```bash
-PORT=8000 TABI_SECURE_COOKIE=true TABI_DATABASE_PATH=/ruta/segura/tabi.sqlite deno task dev
+PORT=8000 TABI_SECURE_COOKIE=true TABI_POSTGRES_HOST=127.0.0.1 TABI_POSTGRES_PASSWORD=... deno task dev
 ```
 
-Debe desplegarse detrás de HTTPS y con copias de seguridad del archivo SQLite.
+Debe desplegarse detrás de HTTPS y con copias periódicas mediante `pg_dump`.
 
 Para el despliegue automatizado con Docker, GHCR, Watchtower y Cloudflare Tunnel, consulta [DEPLOY.md](./DEPLOY.md).
 
@@ -61,7 +62,7 @@ backend/
   auth.js                     registro, login, sesión y contraseñas
   authorization.js            membresía y protección anti-IDOR
   crypto.js                   PBKDF2, tokens y hashing SHA-256
-  database.js                 esquema SQLite y migraciones incrementales
+  database.js                 pool, esquema PostgreSQL y migraciones incrementales
   events.js                   sincronización Server-Sent Events
   exchange-rates.js           proveedor desacoplado y caché de tipos de cambio
   http.js                     errores tipados, cookies y protección de origen
@@ -149,8 +150,8 @@ owner no se puede expulsar ni degradar directamente.
 ## Invitaciones
 
 El servidor genera tokens aleatorios de 256 bits. El token completo se devuelve una sola vez y se guarda únicamente en
-el navegador que creó el enlace para poder copiarlo posteriormente; SQLite conserva solo su hash. La aceptación valida y
-consume el uso dentro de una transacción con versión, evitando carreras entre dos aceptaciones simultáneas.
+el navegador que creó el enlace para poder copiarlo posteriormente; PostgreSQL conserva solo su hash. La aceptación
+valida y consume el uso dentro de una transacción con versión, evitando carreras entre dos aceptaciones simultáneas.
 
 La ruta `/invite/:token` funciona con o sin sesión. El token permanece en la URL durante registro/login, y se consume
 únicamente al pulsar “Unirme al viaje”.
@@ -171,6 +172,5 @@ máximo, permisos Viewer, aislamiento de viajes/IDOR, auditoría y conflictos de
 
 ## Siguiente evolución
 
-SQLite con WAL es adecuado para uso personal o un grupo pequeño en una única instancia. Para una instalación con varias
-réplicas, se puede mantener la API y migrar el repositorio a PostgreSQL/PostGIS; SSE debería respaldarse entonces con
-Redis o `LISTEN/NOTIFY`.
+PostgreSQL permite escrituras concurrentes y separar la persistencia del contenedor de aplicación. Para varias réplicas,
+SSE debería respaldarse con Redis, PostgreSQL `LISTEN/NOTIFY` u otro bus compartido.

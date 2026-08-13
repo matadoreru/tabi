@@ -18,9 +18,29 @@ jobs:
   validate:
     name: Validate Tabi
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: tabi_test
+          POSTGRES_USER: tabi_test
+          POSTGRES_PASSWORD: tabi_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tabi_test -d tabi_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TABI_POSTGRES_HOST: 127.0.0.1
+      TABI_POSTGRES_PORT: 5432
+      TABI_POSTGRES_DB: tabi_test
+      TABI_POSTGRES_USER: tabi_test
+      TABI_POSTGRES_PASSWORD: tabi_test_password
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Deno
         uses: denoland/setup-deno@v2
@@ -45,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

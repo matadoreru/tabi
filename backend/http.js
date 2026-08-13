@@ -60,10 +60,10 @@ export function handleError(error) {
   if (error instanceof HttpError) {
     return json({ error: { code: error.code, message: error.message, details: error.details } }, error.status);
   }
-  if (String(error?.message).includes("UNIQUE constraint failed: users.email")) {
+  if (error?.constraint_name === "idx_users_email_unique" || error?.constraint === "idx_users_email_unique") {
     return json({ error: { code: "EMAIL_TAKEN", message: "Ya existe una cuenta con ese email." } }, 409);
   }
-  if (String(error?.message).includes("UNIQUE constraint failed: users.username")) {
+  if (error?.constraint_name === "idx_users_username_unique" || error?.constraint === "idx_users_username_unique") {
     return json({ error: { code: "USERNAME_TAKEN", message: "Ese nombre de usuario ya está en uso." } }, 409);
   }
   console.error(error);

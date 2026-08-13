@@ -1,6 +1,4 @@
-const testDatabase = `/tmp/tabi-test-${Deno.pid}-${Date.now()}.sqlite`;
 const testCommit = "0123456789abcdef0123456789abcdef01234567";
-Deno.env.set("TABI_DATABASE_PATH", testDatabase);
 Deno.env.set("TABI_PUBLIC_ORIGIN", "https://tabi.example");
 Deno.env.set("TABI_COMMIT_SHA", testCommit);
 Deno.env.delete("TABI_GOOGLE_MAPS_API_KEY");
@@ -11,6 +9,13 @@ const { handleError } = await import("./http.js");
 const { db } = await import("./database.js");
 const { googleMapsUrl, resolveGoogleMapsUrl } = await import("./google-maps.js");
 const { getExchangeRate } = await import("./exchange-rates.js");
+
+await db.exec(`
+  TRUNCATE TABLE
+    exchange_rates, notes, inspirations, reservations, transports, stays, funds, expenses, purchases, tasks, places,
+    activities, trip_activity_logs, trip_invitations, trip_members, sessions, trips, users
+  CASCADE
+`);
 
 function assert(condition, message = "Assertion failed") {
   if (!condition) throw new Error(message);
@@ -84,7 +89,7 @@ Deno.test("cachea tipos de cambio y conserva el último valor si el proveedor fa
   });
   assertEquals(fresh.rate, 0.91);
   assertEquals(fresh.provider, "frankfurter");
-  db.prepare("UPDATE exchange_rates SET fetched_at=? WHERE base_currency='USD' AND quote_currency='EUR'").run(
+  await db.prepare("UPDATE exchange_rates SET fetched_at=? WHERE base_currency='USD' AND quote_currency='EUR'").run(
     "2026-01-01T00:00:00.000Z",
   );
   const fallback = await getExchangeRate("USD", "EUR", {
@@ -122,7 +127,7 @@ Deno.test({
     });
     assertEquals(owner.status, 201);
     assert(owner.cookie.startsWith("tabi_session="));
-    const stored = db.prepare("SELECT password_hash,password_salt FROM users WHERE email=?").get(
+    const stored = await db.prepare("SELECT password_hash,password_salt FROM users WHERE email=?").get(
       "hortensi@example.com",
     );
     assert(stored.password_hash !== "correct horse battery staple", "La contraseña nunca debe persistirse en claro");
@@ -222,11 +227,13 @@ Deno.test({
     );
     assertEquals(inspiration.status, 201);
     assertEquals(inspiration.data.item.url, "https://www.instagram.com/reel/ABC123/");
-    assertEquals(
-      db.prepare("SELECT data FROM inspirations WHERE id=?").get(inspiration.data.item.id).data,
-      '{"url":"https://www.instagram.com/reel/ABC123/","category":"Comida","note":"Probar este restaurante","watched":false}',
-      "La inspiración debe guardar el enlace, la categoría, la nota y su estado",
-    );
+    const storedInspiration = (await db.prepare("SELECT data FROM inspirations WHERE id=?").get(
+      inspiration.data.item.id,
+    )).data;
+    assertEquals(storedInspiration.url, "https://www.instagram.com/reel/ABC123/");
+    assertEquals(storedInspiration.category, "Comida");
+    assertEquals(storedInspiration.note, "Probar este restaurante");
+    assertEquals(storedInspiration.watched, false);
     const watchedInspiration = await call(
       "PATCH",
       `/api/trips/${tripId}/inspirations/${inspiration.data.item.id}`,
@@ -277,7 +284,7 @@ Deno.test({
     assertEquals(invitation.status, 201);
     const token = invitation.data.invitation.token;
     assert(token.length >= 40);
-    const storedInvitation = db.prepare("SELECT token_hash FROM trip_invitations WHERE id=?").get(
+    const storedInvitation = await db.prepare("SELECT token_hash FROM trip_invitations WHERE id=?").get(
       invitation.data.invitation.id,
     );
     assert(storedInvitation.token_hash !== token, "El token de invitación debe almacenarse como hash");

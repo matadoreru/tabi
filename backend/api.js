@@ -29,7 +29,7 @@ export async function api(request, pathname) {
   const parts = pathname.split("/").filter(Boolean).slice(1);
 
   if (parts[0] === "health" && request.method === "GET") {
-    db.prepare("SELECT 1").get();
+    await db.prepare("SELECT 1").get();
     return json({ status: "ok" });
   }
   if (parts[0] === "version" && request.method === "GET") {
@@ -73,7 +73,7 @@ export async function api(request, pathname) {
   const resource = parts[2];
   if (resource === "bootstrap") return bootstrap(request, user, tripId);
   if (resource === "events") {
-    authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
+    await authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
     return eventStream(tripId, request.signal);
   }
   if (resource === "members") return memberRoutes(request, user, tripId, parts.slice(3));
@@ -110,7 +110,7 @@ async function authRoutes(request, parts) {
 
 async function tripCollectionRoutes(request, user) {
   if (request.method === "GET") {
-    const rows = db.prepare(
+    const rows = await db.prepare(
       `SELECT t.*,tm.role,tm.joined_at,(SELECT COUNT(*) FROM trip_members x WHERE x.trip_id=t.id) AS member_count FROM trips t JOIN trip_members tm ON tm.trip_id=t.id WHERE tm.user_id=? ORDER BY t.start_date DESC`,
     ).all(user.id);
     return json({ trips: rows.map(readTrip) });
@@ -121,8 +121,8 @@ async function tripCollectionRoutes(request, user) {
     const extra = tripExtra(input);
     const timestamp = now();
     const id = newId("trip");
-    transaction(() => {
-      db.prepare(
+    await transaction(async () => {
+      await db.prepare(
         "INSERT INTO trips(id,name,emoji,country,start_date,end_date,travelers,budget,currency,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       )
         .run(
@@ -142,15 +142,17 @@ async function tripCollectionRoutes(request, user) {
           user.id,
           user.id,
         );
-      db.prepare("INSERT INTO trip_members(trip_id,user_id,role,joined_at,invited_by) VALUES (?,?,'owner',?,NULL)").run(
+      await db.prepare(
+        "INSERT INTO trip_members(trip_id,user_id,role,joined_at,invited_by) VALUES (?,?,'owner',?,NULL)",
+      ).run(
         id,
         user.id,
         timestamp,
       );
-      audit(id, user.id, "trip.created", "trip", id, { name: input.name });
+      await audit(id, user.id, "trip.created", "trip", id, { name: input.name });
     });
     return json({
-      trip: readTrip(db.prepare("SELECT t.*,'owner' role,1 member_count FROM trips t WHERE id=?").get(id)),
+      trip: readTrip(await db.prepare("SELECT t.*,'owner' role,1 member_count FROM trips t WHERE id=?").get(id)),
     }, 201);
   }
   throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
@@ -158,22 +160,22 @@ async function tripCollectionRoutes(request, user) {
 
 async function tripRoutes(request, user, tripId) {
   if (request.method === "GET") {
-    const member = authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
+    const member = await authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
     return json({
-      trip: readTrip(db.prepare("SELECT * FROM trips WHERE id=?").get(tripId)),
+      trip: readTrip(await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId)),
       membership: readMembership(member),
     });
   }
   if (request.method === "PATCH") {
-    authorize(user.id, tripId, PERMISSIONS.TRIP_EDIT);
+    await authorize(user.id, tripId, PERMISSIONS.TRIP_EDIT);
     const input = await body(request);
-    const current = db.prepare("SELECT * FROM trips WHERE id=?").get(tripId);
+    const current = await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId);
     if (Number(input.version) !== current.version) conflict(current.version);
     const merged = { ...readTrip(current), ...input };
     validateTrip(merged);
-    const extra = tripExtra(merged, JSON.parse(current.data || "{}"));
+    const extra = tripExtra(merged, jsonObject(current.data));
     const timestamp = now();
-    const result = db.prepare(
+    const result = await db.prepare(
       "UPDATE trips SET name=?,emoji=?,country=?,start_date=?,end_date=?,travelers=?,budget=?,currency=?,data=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND version=?",
     )
       .run(
@@ -192,34 +194,38 @@ async function tripRoutes(request, user, tripId) {
         current.version,
       );
     if (!result.changes) conflict(current.version + 1);
-    audit(tripId, user.id, "trip.updated", "trip", tripId, diff(readTrip(current), merged));
+    await audit(tripId, user.id, "trip.updated", "trip", tripId, diff(readTrip(current), merged));
     emit(tripId, user, "trip.updated", "trips", tripId);
-    return json({ trip: readTrip(db.prepare("SELECT * FROM trips WHERE id=?").get(tripId)) });
+    return json({ trip: readTrip(await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId)) });
   }
   if (request.method === "DELETE") {
-    authorize(user.id, tripId, PERMISSIONS.TRIP_DELETE);
-    db.prepare("DELETE FROM trips WHERE id=?").run(tripId);
+    await authorize(user.id, tripId, PERMISSIONS.TRIP_DELETE);
+    await db.prepare("DELETE FROM trips WHERE id=?").run(tripId);
     return json({ ok: true });
   }
   throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
 }
 
-function bootstrap(request, user, tripId) {
+async function bootstrap(request, user, tripId) {
   if (request.method !== "GET") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
-  const member = authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
-  const trip = readTrip(db.prepare("SELECT * FROM trips WHERE id=?").get(tripId));
+  const member = await authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
+  const trip = readTrip(await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId));
   const collections = Object.fromEntries(
-    Object.keys(ENTITY_TABLES).map((
-      name,
-    ) => [
-      name,
-      db.prepare(`SELECT * FROM ${entityTable(name)} WHERE trip_id=? ORDER BY created_at`).all(tripId).map(readEntity),
-    ]),
+    await Promise.all(
+      Object.keys(ENTITY_TABLES).map(async (
+        name,
+      ) => [
+        name,
+        (await db.prepare(`SELECT * FROM ${entityTable(name)} WHERE trip_id=? ORDER BY created_at`).all(tripId)).map(
+          readEntity,
+        ),
+      ]),
+    ),
   );
-  const members = listMembers(tripId);
-  const logs = listLogs(tripId);
+  const members = await listMembers(tripId);
+  const logs = await listLogs(tripId);
   const invitations = permissionsForRole(member.role).includes(PERMISSIONS.MEMBER_INVITE)
-    ? listInvitations(tripId)
+    ? await listInvitations(tripId)
     : [];
   return json({
     trip,
@@ -235,10 +241,10 @@ function bootstrap(request, user, tripId) {
 async function entityRoutes(request, user, tripId, collection, id) {
   const table = entityTable(collection);
   if (request.method === "GET") {
-    authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
-    return json({ items: db.prepare(`SELECT * FROM ${table} WHERE trip_id=?`).all(tripId).map(readEntity) });
+    await authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
+    return json({ items: (await db.prepare(`SELECT * FROM ${table} WHERE trip_id=?`).all(tripId)).map(readEntity) });
   }
-  authorize(user.id, tripId, editPermission(collection));
+  await authorize(user.id, tripId, editPermission(collection));
   const input = await body(request);
   const timestamp = now();
   if (request.method === "POST" && !id) {
@@ -246,22 +252,22 @@ async function entityRoutes(request, user, tripId, collection, id) {
     const data = cleanEntity(input);
     validateEntity(collection, data);
     await attachExchangeSnapshot(tripId, data, input);
-    if (collection === "activities") assertActivityReference(tripId, data);
+    if (collection === "activities") await assertActivityReference(tripId, data);
     if (collection === "places" && googleMapsUrl(data.link)) data.link = await resolveGoogleMapsUrl(data.link);
-    if (collection === "inspirations") assertUniqueInspiration(tripId, data.url);
-    if (collection === "places") assertUniquePlace(tripId, data);
+    if (collection === "inspirations") await assertUniqueInspiration(tripId, data.url);
+    if (collection === "places") await assertUniquePlace(tripId, data);
     const title = entityTitle(collection, data);
-    db.prepare(
+    await db.prepare(
       `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
     )
       .run(entityId, tripId, JSON.stringify(data), 1, timestamp, timestamp, user.id, user.id);
-    audit(tripId, user.id, "entity.created", collection, entityId, { title });
+    await audit(tripId, user.id, "entity.created", collection, entityId, { title });
     emit(tripId, user, "entity.created", collection, entityId);
     return json({
-      item: readEntity(db.prepare(`SELECT * FROM ${table} WHERE id=? AND trip_id=?`).get(entityId, tripId)),
+      item: readEntity(await db.prepare(`SELECT * FROM ${table} WHERE id=? AND trip_id=?`).get(entityId, tripId)),
     }, 201);
   }
-  const current = assertResourceInTrip(table, id, tripId);
+  const current = await assertResourceInTrip(table, id, tripId);
   if (request.method === "PATCH") {
     if (Number(input.version) !== current.version) conflict(current.version);
     const before = readEntity(current);
@@ -270,31 +276,35 @@ async function entityRoutes(request, user, tripId, collection, id) {
     delete data.tripId;
     validateEntity(collection, data);
     await attachExchangeSnapshot(tripId, data, input);
-    if (collection === "activities") assertActivityReference(tripId, data);
+    if (collection === "activities") await assertActivityReference(tripId, data);
     if (collection === "places" && googleMapsUrl(data.link)) data.link = await resolveGoogleMapsUrl(data.link);
-    if (collection === "inspirations") assertUniqueInspiration(tripId, data.url, id);
-    if (collection === "places") assertUniquePlace(tripId, data, id);
-    const result = db.prepare(
+    if (collection === "inspirations") await assertUniqueInspiration(tripId, data.url, id);
+    if (collection === "places") await assertUniquePlace(tripId, data, id);
+    const result = await db.prepare(
       `UPDATE ${table} SET data=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND trip_id=? AND version=?`,
     )
       .run(JSON.stringify(data), timestamp, user.id, id, tripId, current.version);
     if (!result.changes) conflict(current.version + 1);
-    audit(tripId, user.id, "entity.updated", collection, id, {
+    await audit(tripId, user.id, "entity.updated", collection, id, {
       title: entityTitle(collection, data),
       changes: diff(before, data),
     });
     emit(tripId, user, "entity.updated", collection, id);
-    return json({ item: readEntity(db.prepare(`SELECT * FROM ${table} WHERE id=? AND trip_id=?`).get(id, tripId)) });
+    return json({
+      item: readEntity(await db.prepare(`SELECT * FROM ${table} WHERE id=? AND trip_id=?`).get(id, tripId)),
+    });
   }
   if (request.method === "DELETE") {
     if (Number(input.version) !== current.version) conflict(current.version);
-    const result = db.prepare(`DELETE FROM ${table} WHERE id=? AND trip_id=? AND version=?`).run(
+    const result = await db.prepare(`DELETE FROM ${table} WHERE id=? AND trip_id=? AND version=?`).run(
       id,
       tripId,
       current.version,
     );
     if (!result.changes) conflict(current.version + 1);
-    audit(tripId, user.id, "entity.deleted", collection, id, { title: entityTitle(collection, readEntity(current)) });
+    await audit(tripId, user.id, "entity.deleted", collection, id, {
+      title: entityTitle(collection, readEntity(current)),
+    });
     emit(tripId, user, "entity.deleted", collection, id);
     return json({ ok: true });
   }
@@ -303,32 +313,32 @@ async function entityRoutes(request, user, tripId, collection, id) {
 
 async function memberRoutes(request, user, tripId, parts) {
   if (request.method === "GET" && !parts[0]) {
-    authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
-    return json({ members: listMembers(tripId) });
+    await authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
+    return json({ members: await listMembers(tripId) });
   }
   const targetId = parts[0];
   if (!targetId) throw new HttpError(404, "NOT_FOUND", "Miembro no encontrado.");
   if (request.method === "PATCH") {
-    authorize(user.id, tripId, PERMISSIONS.MEMBER_CHANGE_ROLE);
+    await authorize(user.id, tripId, PERMISSIONS.MEMBER_CHANGE_ROLE);
     const input = await body(request);
     if (!["editor", "viewer"].includes(input.role)) throw new HttpError(422, "INVALID_ROLE", "Rol no válido.");
-    const target = membership(targetId, tripId);
+    const target = await membership(targetId, tripId);
     if (!target || target.role === "owner") {
       throw new HttpError(422, "OWNER_PROTECTED", "Transfiere la propiedad para cambiar al owner.");
     }
-    db.prepare("UPDATE trip_members SET role=? WHERE trip_id=? AND user_id=?").run(input.role, tripId, targetId);
-    audit(tripId, user.id, "member.role_changed", "member", targetId, { from: target.role, to: input.role });
+    await db.prepare("UPDATE trip_members SET role=? WHERE trip_id=? AND user_id=?").run(input.role, tripId, targetId);
+    await audit(tripId, user.id, "member.role_changed", "member", targetId, { from: target.role, to: input.role });
     emit(tripId, user, "member.role_changed", "members", targetId);
-    return json({ members: listMembers(tripId) });
+    return json({ members: await listMembers(tripId) });
   }
   if (request.method === "DELETE") {
-    authorize(user.id, tripId, PERMISSIONS.MEMBER_REMOVE);
-    const target = membership(targetId, tripId);
+    await authorize(user.id, tripId, PERMISSIONS.MEMBER_REMOVE);
+    const target = await membership(targetId, tripId);
     if (!target || target.role === "owner") {
       throw new HttpError(422, "OWNER_PROTECTED", "No se puede expulsar al propietario.");
     }
-    db.prepare("DELETE FROM trip_members WHERE trip_id=? AND user_id=?").run(tripId, targetId);
-    audit(tripId, user.id, "member.removed", "member", targetId, { name: target.name });
+    await db.prepare("DELETE FROM trip_members WHERE trip_id=? AND user_id=?").run(tripId, targetId);
+    await audit(tripId, user.id, "member.removed", "member", targetId, { name: target.name });
     emit(tripId, user, "member.removed", "members", targetId);
     return json({ ok: true });
   }
@@ -336,8 +346,8 @@ async function memberRoutes(request, user, tripId, parts) {
 }
 
 async function invitationRoutes(request, user, tripId, parts) {
-  authorize(user.id, tripId, PERMISSIONS.MEMBER_INVITE);
-  if (request.method === "GET") return json({ invitations: listInvitations(tripId) });
+  await authorize(user.id, tripId, PERMISSIONS.MEMBER_INVITE);
+  if (request.method === "GET") return json({ invitations: await listInvitations(tripId) });
   if (request.method === "POST") {
     const input = await body(request);
     if (!["editor", "viewer"].includes(input.role)) {
@@ -355,15 +365,15 @@ async function invitationRoutes(request, user, tripId, parts) {
     const id = newId("inv");
     const timestamp = now();
     const expiresAt = new Date(Date.now() + expiryDays * 86400000).toISOString();
-    db.prepare(
+    await db.prepare(
       "INSERT INTO trip_invitations(id,trip_id,token_hash,role,created_by,created_at,expires_at,max_uses,uses,version) VALUES (?,?,?,?,?,?,?,?,0,1)",
     )
       .run(id, tripId, await sha256(token), input.role, user.id, timestamp, expiresAt, maxUses);
-    audit(tripId, user.id, "invitation.created", "invitation", id, { role: input.role, maxUses, expiresAt });
+    await audit(tripId, user.id, "invitation.created", "invitation", id, { role: input.role, maxUses, expiresAt });
     return json({
       invitation: {
         ...readInvitation(
-          db.prepare(
+          await db.prepare(
             "SELECT i.*,u.name creator_name FROM trip_invitations i JOIN users u ON u.id=i.created_by WHERE i.id=?",
           ).get(id),
         ),
@@ -372,14 +382,17 @@ async function invitationRoutes(request, user, tripId, parts) {
     }, 201);
   }
   if (request.method === "DELETE" && parts[0]) {
-    const invitation = db.prepare("SELECT * FROM trip_invitations WHERE id=? AND trip_id=?").get(parts[0], tripId);
+    const invitation = await db.prepare("SELECT * FROM trip_invitations WHERE id=? AND trip_id=?").get(
+      parts[0],
+      tripId,
+    );
     if (!invitation) throw new HttpError(404, "INVITATION_NOT_FOUND", "Invitación no encontrada.");
-    db.prepare("UPDATE trip_invitations SET revoked_at=?,version=version+1 WHERE id=? AND trip_id=?").run(
+    await db.prepare("UPDATE trip_invitations SET revoked_at=?,version=version+1 WHERE id=? AND trip_id=?").run(
       now(),
       parts[0],
       tripId,
     );
-    audit(tripId, user.id, "invitation.revoked", "invitation", parts[0], {});
+    await audit(tripId, user.id, "invitation.revoked", "invitation", parts[0], {});
     return json({ ok: true });
   }
   throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
@@ -390,7 +403,7 @@ async function invitePublicRoutes(request, parts) {
   if (!token) throw new HttpError(404, "INVITATION_NOT_FOUND", "Invitación no encontrada.");
   const tokenHash = await sha256(token);
   if (request.method === "GET") {
-    const row = invitationByHash(tokenHash);
+    const row = await invitationByHash(tokenHash);
     validateInvitation(row);
     const user = await currentUser(request, false);
     return json({ invitation: publicInvitation(row), user });
@@ -398,13 +411,13 @@ async function invitePublicRoutes(request, parts) {
   if (request.method === "POST" && parts[1] === "accept") {
     const user = await currentUser(request);
     let tripId;
-    transaction(() => {
-      const row = invitationByHash(tokenHash);
+    await transaction(async () => {
+      const row = await invitationByHash(tokenHash);
       validateInvitation(row);
       tripId = row.trip_id;
-      const existing = membership(user.id, tripId);
+      const existing = await membership(user.id, tripId);
       if (!existing) {
-        db.prepare("INSERT INTO trip_members(trip_id,user_id,role,joined_at,invited_by) VALUES (?,?,?,?,?)").run(
+        await db.prepare("INSERT INTO trip_members(trip_id,user_id,role,joined_at,invited_by) VALUES (?,?,?,?,?)").run(
           tripId,
           user.id,
           row.role,
@@ -412,11 +425,11 @@ async function invitePublicRoutes(request, parts) {
           row.created_by,
         );
       }
-      const result = db.prepare(
+      const result = await db.prepare(
         "UPDATE trip_invitations SET uses=uses+1,version=version+1 WHERE id=? AND version=? AND revoked_at IS NULL AND uses<max_uses AND expires_at>?",
       ).run(row.id, row.version, now());
       if (!result.changes) throw new HttpError(409, "INVITATION_ALREADY_USED", "La invitación ya no está disponible.");
-      audit(tripId, user.id, "member.joined", "member", user.id, { role: row.role });
+      await audit(tripId, user.id, "member.joined", "member", user.id, { role: row.role });
     });
     emit(tripId, user, "member.joined", "members", user.id);
     return json({ tripId });
@@ -426,41 +439,41 @@ async function invitePublicRoutes(request, parts) {
 
 async function transferTrip(request, user, tripId) {
   if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
-  authorize(user.id, tripId, PERMISSIONS.OWNER_TRANSFER);
+  await authorize(user.id, tripId, PERMISSIONS.OWNER_TRANSFER);
   const input = await body(request);
-  const target = membership(input.userId, tripId);
+  const target = await membership(input.userId, tripId);
   if (!target || target.role === "owner") {
     throw new HttpError(422, "INVALID_MEMBER", "Selecciona otro miembro del viaje.");
   }
-  transaction(() => {
-    db.prepare("UPDATE trip_members SET role='editor' WHERE trip_id=? AND user_id=?").run(tripId, user.id);
-    db.prepare("UPDATE trip_members SET role='owner' WHERE trip_id=? AND user_id=?").run(tripId, input.userId);
-    audit(tripId, user.id, "owner.transferred", "member", input.userId, { from: user.id, to: input.userId });
+  await transaction(async () => {
+    await db.prepare("UPDATE trip_members SET role='editor' WHERE trip_id=? AND user_id=?").run(tripId, user.id);
+    await db.prepare("UPDATE trip_members SET role='owner' WHERE trip_id=? AND user_id=?").run(tripId, input.userId);
+    await audit(tripId, user.id, "owner.transferred", "member", input.userId, { from: user.id, to: input.userId });
   });
   emit(tripId, user, "owner.transferred", "members", input.userId);
   return json({ ok: true });
 }
 
-function leaveTrip(request, user, tripId) {
+async function leaveTrip(request, user, tripId) {
   if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
-  const member = authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
+  const member = await authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
   if (member.role === "owner") {
     throw new HttpError(422, "OWNER_CANNOT_LEAVE", "Transfiere la propiedad antes de abandonar el viaje.");
   }
-  db.prepare("DELETE FROM trip_members WHERE trip_id=? AND user_id=?").run(tripId, user.id);
-  audit(tripId, user.id, "member.left", "member", user.id, {});
+  await db.prepare("DELETE FROM trip_members WHERE trip_id=? AND user_id=?").run(tripId, user.id);
+  await audit(tripId, user.id, "member.left", "member", user.id, {});
   emit(tripId, user, "member.left", "members", user.id);
   return json({ ok: true });
 }
 
-function duplicateTrip(request, user, tripId) {
+async function duplicateTrip(request, user, tripId) {
   if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
-  authorize(user.id, tripId, PERMISSIONS.TRIP_DUPLICATE);
-  const source = db.prepare("SELECT * FROM trips WHERE id=?").get(tripId);
+  await authorize(user.id, tripId, PERMISSIONS.TRIP_DUPLICATE);
+  const source = await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId);
   const newTripId = newId("trip");
   const timestamp = now();
-  transaction(() => {
-    db.prepare(
+  await transaction(async () => {
+    await db.prepare(
       "INSERT INTO trips(id,name,emoji,country,start_date,end_date,travelers,budget,currency,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
       .run(
@@ -480,19 +493,19 @@ function duplicateTrip(request, user, tripId) {
         user.id,
         user.id,
       );
-    db.prepare("INSERT INTO trip_members(trip_id,user_id,role,joined_at) VALUES (?,?,'owner',?)").run(
+    await db.prepare("INSERT INTO trip_members(trip_id,user_id,role,joined_at) VALUES (?,?,'owner',?)").run(
       newTripId,
       user.id,
       timestamp,
     );
     for (const table of Object.values(ENTITY_TABLES)) {
-      for (const row of db.prepare(`SELECT * FROM ${table} WHERE trip_id=?`).all(tripId)) {
-        db.prepare(
+      for (const row of await db.prepare(`SELECT * FROM ${table} WHERE trip_id=?`).all(tripId)) {
+        await db.prepare(
           `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
         ).run(newId(table.slice(0, 3)), newTripId, row.data, 1, timestamp, timestamp, user.id, user.id);
       }
     }
-    audit(newTripId, user.id, "trip.duplicated", "trip", newTripId, { sourceTripId: tripId });
+    await audit(newTripId, user.id, "trip.duplicated", "trip", newTripId, { sourceTripId: tripId });
   });
   return json({ tripId: newTripId }, 201);
 }
@@ -518,26 +531,28 @@ function exportedTrip(row) {
     name: row.name,
     emoji: row.emoji,
     country: row.country,
-    startDate: row.start_date,
-    endDate: row.end_date,
+    startDate: dateOnly(row.start_date),
+    endDate: dateOnly(row.end_date),
     travelers: row.travelers,
     budget: row.budget,
     currency: row.currency,
-    extra: JSON.parse(row.data || "{}"),
+    extra: jsonObject(row.data),
   };
 }
 
 async function tripArchiveRoutes(request, user, tripId) {
   if (request.method === "GET") {
-    authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
-    const trip = db.prepare("SELECT * FROM trips WHERE id=?").get(tripId);
+    await authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
+    const trip = await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId);
     const collections = Object.fromEntries(
-      Object.entries(ENTITY_TABLES).map(([collection, table]) => [
-        collection,
-        db.prepare(`SELECT * FROM ${table} WHERE trip_id=? ORDER BY created_at`).all(tripId)
-          .map(readEntity)
-          .map(portableEntity),
-      ]),
+      await Promise.all(
+        Object.entries(ENTITY_TABLES).map(async ([collection, table]) => [
+          collection,
+          (await db.prepare(`SELECT * FROM ${table} WHERE trip_id=? ORDER BY created_at`).all(tripId))
+            .map(readEntity)
+            .map(portableEntity),
+        ]),
+      ),
     );
     return json({
       format: ARCHIVE_FORMAT,
@@ -558,7 +573,7 @@ async function tripArchiveRoutes(request, user, tripId) {
     });
   }
   if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
-  authorize(user.id, tripId, PERMISSIONS.TRIP_EDIT);
+  await authorize(user.id, tripId, PERMISSIONS.TRIP_EDIT);
   const input = await body(request, CONFIG.maxArchiveBytes);
   return importTripArchive(input.archive || input, user, tripId);
 }
@@ -619,7 +634,7 @@ async function importTripArchive(archive, user, tripId) {
         throw new HttpError(422, "INVALID_ARCHIVE", `El id “${sourceId}” está repetido en “${collection}”.`);
       }
       if (sourceId) sourceIds.add(sourceId);
-      const collision = sourceId ? db.prepare(`SELECT trip_id FROM ${table} WHERE id=?`).get(sourceId) : null;
+      const collision = sourceId ? await db.prepare(`SELECT trip_id FROM ${table} WHERE id=?`).get(sourceId) : null;
       const targetId = sourceId && (!collision || collision.trip_id === tripId)
         ? sourceId
         : newId(collection.slice(0, 3));
@@ -676,9 +691,11 @@ async function importTripArchive(archive, user, tripId) {
 
   const timestamp = now();
   const entityCount = Object.values(prepared).reduce((sum, items) => sum + items.length, 0);
-  transaction(() => {
-    for (const table of Object.values(ENTITY_TABLES)) db.prepare(`DELETE FROM ${table} WHERE trip_id=?`).run(tripId);
-    db.prepare(
+  await transaction(async () => {
+    for (const table of Object.values(ENTITY_TABLES)) {
+      await db.prepare(`DELETE FROM ${table} WHERE trip_id=?`).run(tripId);
+    }
+    await db.prepare(
       "UPDATE trips SET name=?,emoji=?,country=?,start_date=?,end_date=?,travelers=?,budget=?,currency=?,data=?,version=version+1,updated_at=?,updated_by=? WHERE id=?",
     ).run(
       trip.name,
@@ -696,57 +713,57 @@ async function importTripArchive(archive, user, tripId) {
     );
     for (const [collection, table] of Object.entries(ENTITY_TABLES)) {
       for (const item of prepared[collection]) {
-        db.prepare(
+        await db.prepare(
           `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
         ).run(item.id, tripId, JSON.stringify(item.data), 1, timestamp, timestamp, user.id, user.id);
       }
     }
-    audit(tripId, user.id, "trip.archive_imported", "trip", tripId, { entityCount, schemaVersion: 1 });
+    await audit(tripId, user.id, "trip.archive_imported", "trip", tripId, { entityCount, schemaVersion: 1 });
   });
   emit(tripId, user, "trip.archive_imported", "trips", tripId);
   return json({
     imported: entityCount,
     warnings,
-    trip: readTrip(db.prepare("SELECT * FROM trips WHERE id=?").get(tripId)),
+    trip: readTrip(await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId)),
   });
 }
 
 async function importTripData(request, user, tripId) {
   if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
-  authorize(user.id, tripId, PERMISSIONS.TRIP_EDIT);
+  await authorize(user.id, tripId, PERMISSIONS.TRIP_EDIT);
   const input = await body(request);
   const timestamp = now();
   let count = 0;
-  transaction(() => {
+  await transaction(async () => {
     for (const [collection, table] of Object.entries(ENTITY_TABLES)) {
       for (const source of input[collection] || []) {
         const data = cleanEntity(source);
         delete data.id;
         delete data.tripId;
         validateEntity(collection, data);
-        db.prepare(
+        await db.prepare(
           `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
         ).run(newId(collection.slice(0, 3)), tripId, JSON.stringify(data), 1, timestamp, timestamp, user.id, user.id);
         count++;
       }
     }
-    audit(tripId, user.id, "trip.imported", "trip", tripId, { entityCount: count });
+    await audit(tripId, user.id, "trip.imported", "trip", tripId, { entityCount: count });
   });
   emit(tripId, user, "trip.imported", "trips", tripId);
   return json({ imported: count });
 }
 
 function readTrip(row) {
-  const extra = JSON.parse(row.data || "{}");
+  const extra = jsonObject(row.data);
   return {
     id: row.id,
     name: row.name,
     emoji: row.emoji,
     country: row.country,
-    startDate: row.start_date,
-    endDate: row.end_date,
+    startDate: dateOnly(row.start_date),
+    endDate: dateOnly(row.end_date),
     travelers: row.travelers,
-    budget: row.budget,
+    budget: Number(row.budget),
     currency: row.currency,
     secondaryCurrency: extra.secondaryCurrency || alternateCurrency(row.currency),
     exchangeRateMode: extra.exchangeRateMode || "manual",
@@ -755,22 +772,22 @@ function readTrip(row) {
     budgetCurrency: extra.budgetCurrency || row.currency,
     extra,
     version: row.version,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: isoValue(row.created_at),
+    updatedAt: isoValue(row.updated_at),
     createdBy: row.created_by,
     updatedBy: row.updated_by,
     role: row.role,
-    memberCount: row.member_count,
+    memberCount: Number(row.member_count || 0),
   };
 }
 function readEntity(row) {
   return {
-    ...JSON.parse(row.data),
+    ...jsonObject(row.data),
     id: row.id,
     tripId: row.trip_id,
     version: row.version,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: isoValue(row.created_at),
+    updatedAt: isoValue(row.updated_at),
     createdBy: row.created_by,
     updatedBy: row.updated_by,
   };
@@ -784,25 +801,25 @@ function readMembership(row) {
     userId: row.user_id,
     tripId: row.trip_id,
     role: row.role,
-    joinedAt: row.joined_at,
+    joinedAt: isoValue(row.joined_at),
     invitedBy: row.invited_by,
     permissions: permissionsForRole(row.role),
   };
 }
-function listMembers(tripId) {
-  return db.prepare(
+async function listMembers(tripId) {
+  return (await db.prepare(
     `SELECT ${userSelect},tm.role,tm.joined_at,tm.invited_by FROM trip_members tm JOIN users u ON u.id=tm.user_id WHERE tm.trip_id=? ORDER BY CASE tm.role WHEN 'owner' THEN 0 WHEN 'editor' THEN 1 ELSE 2 END,u.name`,
-  ).all(tripId).map((row) => ({
+  ).all(tripId)).map((row) => ({
     user: publicUser(row),
     role: row.role,
-    joinedAt: row.joined_at,
+    joinedAt: isoValue(row.joined_at),
     invitedBy: row.invited_by,
   }));
 }
-function listLogs(tripId) {
-  return db.prepare(
+async function listLogs(tripId) {
+  return (await db.prepare(
     "SELECT l.*,u.name user_name,u.avatar_url FROM trip_activity_logs l LEFT JOIN users u ON u.id=l.user_id WHERE l.trip_id=? ORDER BY l.created_at DESC LIMIT 50",
-  ).all(tripId).map((row) => ({
+  ).all(tripId)).map((row) => ({
     id: row.id,
     tripId: row.trip_id,
     userId: row.user_id,
@@ -811,19 +828,20 @@ function listLogs(tripId) {
     action: row.action,
     entityType: row.entity_type,
     entityId: row.entity_id,
-    metadata: JSON.parse(row.metadata),
-    createdAt: row.created_at,
+    metadata: jsonObject(row.metadata),
+    createdAt: isoValue(row.created_at),
   }));
 }
-function listInvitations(tripId) {
-  return db.prepare(
+async function listInvitations(tripId) {
+  return (await db.prepare(
     "SELECT i.*,u.name creator_name FROM trip_invitations i JOIN users u ON u.id=i.created_by WHERE i.trip_id=? ORDER BY i.created_at DESC",
-  ).all(tripId).map(readInvitation);
+  ).all(tripId)).map(readInvitation);
 }
 function readInvitation(row) {
+  const expiresAt = isoValue(row.expires_at);
   const status = row.revoked_at
     ? "revoked"
-    : row.expires_at <= now()
+    : expiresAt <= now()
     ? "expired"
     : row.uses >= row.max_uses
     ? "used"
@@ -834,16 +852,16 @@ function readInvitation(row) {
     role: row.role,
     createdBy: row.created_by,
     creatorName: row.creator_name,
-    createdAt: row.created_at,
-    expiresAt: row.expires_at,
+    createdAt: isoValue(row.created_at),
+    expiresAt,
     maxUses: row.max_uses,
     uses: row.uses,
     status,
     version: row.version,
   };
 }
-function invitationByHash(hash) {
-  return db.prepare(
+async function invitationByHash(hash) {
+  return await db.prepare(
     "SELECT i.*,t.name trip_name,t.emoji trip_emoji,u.name creator_name FROM trip_invitations i JOIN trips t ON t.id=i.trip_id JOIN users u ON u.id=i.created_by WHERE i.token_hash=?",
   ).get(hash);
 }
@@ -854,15 +872,25 @@ function publicInvitation(row) {
 function validateInvitation(row) {
   if (!row) throw new HttpError(404, "INVITATION_NOT_FOUND", "La invitación no existe.");
   if (row.revoked_at) throw new HttpError(410, "INVITATION_REVOKED", "La invitación ha sido revocada.");
-  if (row.expires_at <= now()) throw new HttpError(410, "INVITATION_EXPIRED", "La invitación ha caducado.");
+  if (isoValue(row.expires_at) <= now()) throw new HttpError(410, "INVITATION_EXPIRED", "La invitación ha caducado.");
   if (row.uses >= row.max_uses) {
     throw new HttpError(410, "INVITATION_USED", "La invitación ha alcanzado su número máximo de usos.");
   }
 }
-function audit(tripId, userId, action, entityType, entityId, metadata) {
-  db.prepare(
+async function audit(tripId, userId, action, entityType, entityId, metadata) {
+  await db.prepare(
     "INSERT INTO trip_activity_logs(id,trip_id,user_id,action,entity_type,entity_id,metadata,created_at) VALUES (?,?,?,?,?,?,?,?)",
   ).run(newId("log"), tripId, userId, action, entityType, entityId, JSON.stringify(metadata || {}), now());
+}
+function jsonObject(value) {
+  if (!value) return {};
+  return typeof value === "string" ? JSON.parse(value) : value;
+}
+function isoValue(value) {
+  return value instanceof Date ? value.toISOString() : String(value || "");
+}
+function dateOnly(value) {
+  return isoValue(value).slice(0, 10);
 }
 function emit(tripId, user, action, collection, entityId) {
   publish(tripId, { action, collection, entityId, user: { id: user.id, name: user.name }, at: now() });
@@ -872,14 +900,14 @@ function entityTitle(collection, item) {
     ({ expenses: "Gasto", inspirations: "Inspiración" })[collection] || "Elemento";
 }
 
-function assertUniqueInspiration(tripId, url, excludedId = "") {
-  const duplicate = db.prepare(
-    "SELECT id FROM inspirations WHERE trip_id=? AND json_extract(data, '$.url')=? AND id<>?",
+async function assertUniqueInspiration(tripId, url, excludedId = "") {
+  const duplicate = await db.prepare(
+    "SELECT id FROM inspirations WHERE trip_id=? AND data->>'url'=? AND id<>?",
   ).get(tripId, url, excludedId);
   if (duplicate) throw new HttpError(409, "INSPIRATION_EXISTS", "Este enlace ya está guardado en el viaje.");
 }
-function assertUniquePlace(tripId, candidate, excludedId = "") {
-  const places = db.prepare("SELECT * FROM places WHERE trip_id=?").all(tripId).map(readEntity);
+async function assertUniquePlace(tripId, candidate, excludedId = "") {
+  const places = (await db.prepare("SELECT * FROM places WHERE trip_id=?").all(tripId)).map(readEntity);
   const duplicate = findPlaceDuplicate(candidate, places, excludedId);
   if (!duplicate) return;
   const reason = duplicate.reason === "link" ? "enlace de Google Maps" : "nombre y ciudad";
@@ -890,7 +918,7 @@ function assertUniquePlace(tripId, candidate, excludedId = "") {
     { duplicateId: duplicate.place.id, reason: duplicate.reason },
   );
 }
-function assertActivityReference(tripId, activity) {
+async function assertActivityReference(tripId, activity) {
   const relation = {
     Lugar: ["places", activity.placeId],
     Hospedaje: ["stays", activity.stayId],
@@ -899,7 +927,7 @@ function assertActivityReference(tripId, activity) {
   if (!relation) return;
   const [collection, id] = relation;
   const table = entityTable(collection);
-  if (!db.prepare(`SELECT 1 FROM ${table} WHERE id=? AND trip_id=?`).get(id, tripId)) {
+  if (!await db.prepare(`SELECT 1 FROM ${table} WHERE id=? AND trip_id=?`).get(id, tripId)) {
     throw new HttpError(422, "INVALID_ACTIVITY_LINK", "El elemento vinculado no existe en este viaje.");
   }
 }
@@ -967,7 +995,8 @@ function validateEntity(collection, data) {
     throw new HttpError(422, "INVALID_ENTITY", "El elemento contiene demasiados campos.");
   }
   for (const [field, value] of Object.entries(data)) {
-    const maxLength = field === "photo" && /^data:image\/(?:jpeg|png|webp);base64,/.test(value) ? 350_000 : 10_000;
+    const imageField = field === "photo" || field === "backgroundImage";
+    const maxLength = imageField && /^data:image\/(?:jpeg|png|webp);base64,/.test(value) ? 350_000 : 10_000;
     if (typeof value === "string" && value.length > maxLength) {
       throw new HttpError(422, "INVALID_ENTITY", "Uno de los campos es demasiado largo.");
     }
@@ -994,6 +1023,14 @@ function validateEntity(collection, data) {
   }
   if (collection === "purchases" && data.photo && !/^data:image\/(?:jpeg|png|webp);base64,/.test(data.photo)) {
     throw new HttpError(422, "INVALID_PURCHASE_PHOTO", "La foto del producto no tiene un formato válido.");
+  }
+  if (collection === "places") {
+    if (data.backgroundMode && !["auto", "image", "color", "emoji"].includes(data.backgroundMode)) {
+      throw new HttpError(422, "INVALID_PLACE_BACKGROUND", "El tipo de fondo del lugar no es válido.");
+    }
+    if (data.backgroundImage && !/^data:image\/(?:jpeg|png|webp);base64,/.test(data.backgroundImage)) {
+      throw new HttpError(422, "INVALID_PLACE_BACKGROUND", "La imagen de fondo no tiene un formato válido.");
+    }
   }
   if (collection === "activities" && data.end <= data.start) {
     throw new HttpError(422, "INVALID_TIME", "La hora final debe ser posterior a la inicial.");
@@ -1110,7 +1147,7 @@ function validateEntity(collection, data) {
   if (collection === "purchases" && Number(data.actualPrice || 0) > 0) {
     data.status = "Comprado";
   }
-  if (collection === "stays") {
+  if (collection === "stays" || collection === "transports") {
     const total = Number(data.price || 0);
     const paid = Number(data.paidAmount || 0);
     if (paid > total) {
@@ -1139,10 +1176,10 @@ async function attachExchangeSnapshot(tripId, data, submitted = data) {
   const monetaryChange = !data.exchangeRateSnapshot ||
     Object.keys(submitted).some((field) => field === "currency" || monetaryFields.has(field));
   if (!monetaryChange) return;
-  const row = db.prepare("SELECT currency,data FROM trips WHERE id=?").get(tripId);
+  const row = await db.prepare("SELECT currency,data FROM trips WHERE id=?").get(tripId);
   const primary = row.currency;
   const source = data.currency;
-  const extra = JSON.parse(row.data || "{}");
+  const extra = jsonObject(row.data);
   let rate = 1;
   let provider = "identity";
   let rateDate = now().slice(0, 10);
@@ -1170,7 +1207,17 @@ async function attachExchangeSnapshot(tripId, data, submitted = data) {
   data.exchangeRateProvider = provider;
 }
 function diff(before, after) {
-  const ignored = new Set(["id", "tripId", "version", "createdAt", "updatedAt", "createdBy", "updatedBy", "photo"]);
+  const ignored = new Set([
+    "id",
+    "tripId",
+    "version",
+    "createdAt",
+    "updatedAt",
+    "createdBy",
+    "updatedBy",
+    "photo",
+    "backgroundImage",
+  ]);
   return Object.fromEntries(
     Object.keys(after).filter((key) => !ignored.has(key) && JSON.stringify(before[key]) !== JSON.stringify(after[key]))
       .map((key) => [key, { from: before[key] ?? null, to: after[key] ?? null }]),

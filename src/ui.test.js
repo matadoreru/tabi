@@ -1,5 +1,6 @@
 import { formatDate, searchKey, visualLabel, visualSymbol } from "./ui.js";
 import { EMOJI_GROUPS } from "./emojis.js";
+import { normalizePlaceAppearance, resolvePlaceBackground } from "./backgrounds.js";
 
 function assertEquals(actual, expected) {
   if (actual !== expected) throw new Error(`Esperado ${expected}; recibido ${actual}`);
@@ -111,5 +112,30 @@ Deno.test("las acciones principales viven junto a su contenido y Documentos no e
   if (!source.includes("function addAction(")) throw new Error("Falta el patrón común de acciones de sección");
   if (source.includes('["documents", "Documentos"') || source.includes("renderDocuments")) {
     throw new Error("La sección Documentos debe estar eliminada");
+  }
+});
+
+Deno.test("la apariencia manual de un lugar tiene prioridad sobre la foto de Google", () => {
+  const custom = resolvePlaceBackground({
+    backgroundMode: "color",
+    backgroundColor: "#123456",
+    photoUrl: "https://example.com/google.jpg",
+  });
+  assertEquals(custom.type, "color");
+  assertEquals(custom.value, "#123456");
+  const legacy = resolvePlaceBackground({ photoUrl: "https://example.com/google.jpg" });
+  assertEquals(legacy.type, "image");
+  assertEquals(legacy.automatic, true);
+  assertEquals(normalizePlaceAppearance({ backgroundMode: "desconocido" }).mode, "auto");
+});
+
+Deno.test("compras e itinerario incorporan visor y selector horizontal accesibles", async () => {
+  const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  const lightbox = await Deno.readTextFile(new URL("./lightbox.js", import.meta.url));
+  if (!source.includes('data-lightbox="purchase-') || !lightbox.includes('event.key === "Escape"')) {
+    throw new Error("Las fotografías de compras deben abrir el visor reutilizable y cerrarse con Escape");
+  }
+  if (!source.includes('role="tablist"') || !source.includes('aria-selected="${selected}"')) {
+    throw new Error("El selector de días debe exponer semántica de pestañas");
   }
 });

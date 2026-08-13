@@ -12,6 +12,7 @@ import {
   sharedInspirationLink,
   stayBudgetAmounts,
   stayNights,
+  transportBudgetAmounts,
 } from "./domain.js";
 import {
   convertCurrency,
@@ -117,6 +118,26 @@ Deno.test("incluye alojamientos pagados y pendientes en el presupuesto", () => {
 Deno.test("mantiene compatibles los alojamientos pagados sin paidAmount", () => {
   const result = stayBudgetAmounts({ price: 450, paymentStatus: "Pagado" });
   assertEquals(result.paid, 450);
+  assertEquals(result.pending, 0);
+});
+Deno.test("integra transportes pagados, pendientes y cancelados en el presupuesto", () => {
+  const transports = [
+    { price: 100, paidAmount: 40, paymentStatus: "Parcial", status: "Confirmado" },
+    { price: 75, paymentStatus: "Pagado", status: "Confirmado" },
+    { price: 200, paymentStatus: "Pendiente", status: "Por reservar" },
+    { price: 500, paymentStatus: "Pagado", status: "Cancelado" },
+  ];
+  const result = budgetSummary({ budget: 1000 }, [], [], [], [], transports);
+  assertEquals(result.transportSpent, 115);
+  assertEquals(result.transportCommitted, 260);
+  assertEquals(result.transportTotal, 375);
+  assertEquals(result.spent, 115);
+  assertEquals(result.committed, 260);
+  assertEquals(result.remaining, 885);
+});
+Deno.test("mantiene compatibles los transportes realizados antiguos", () => {
+  const result = transportBudgetAmounts({ price: 90, status: "Realizado" });
+  assertEquals(result.paid, 90);
   assertEquals(result.pending, 0);
 });
 Deno.test("suma fondos aportados al presupuesto base", () => {

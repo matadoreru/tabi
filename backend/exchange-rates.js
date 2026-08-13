@@ -16,20 +16,28 @@ function validatePair(base, quote) {
   return { base: normalizedBase, quote: normalizedQuote };
 }
 
-function cachedRate(base, quote) {
-  return db.prepare("SELECT * FROM exchange_rates WHERE base_currency=? AND quote_currency=?").get(base, quote);
+async function cachedRate(base, quote) {
+  return await db.prepare("SELECT * FROM exchange_rates WHERE base_currency=? AND quote_currency=?").get(base, quote);
 }
 
 function responseData(row, stale = false) {
   return {
     base: row.base_currency,
     quote: row.quote_currency,
-    rate: row.rate,
+    rate: Number(row.rate),
     provider: row.provider,
-    rateDate: row.rate_date,
-    fetchedAt: row.fetched_at,
+    rateDate: dateOnly(row.rate_date),
+    fetchedAt: isoValue(row.fetched_at),
     stale,
   };
+}
+
+function isoValue(value) {
+  return value instanceof Date ? value.toISOString() : String(value || "");
+}
+
+function dateOnly(value) {
+  return isoValue(value).slice(0, 10);
 }
 
 export async function getExchangeRate(baseInput, quoteInput, { force = false, fetcher = fetch } = {}) {
@@ -38,7 +46,7 @@ export async function getExchangeRate(baseInput, quoteInput, { force = false, fe
     const timestamp = now();
     return { base, quote, rate: 1, provider: "identity", rateDate: timestamp.slice(0, 10), fetchedAt: timestamp };
   }
-  const cached = cachedRate(base, quote);
+  const cached = await cachedRate(base, quote);
   const age = cached ? Date.now() - Date.parse(cached.fetched_at) : Infinity;
   const fresh = cached && age < EXCHANGE_RATE_TTL_MS;
   if (fresh && !force) return responseData(cached);
@@ -54,13 +62,13 @@ export async function getExchangeRate(baseInput, quoteInput, { force = false, fe
     if (!Number.isFinite(rate) || rate <= 0) throw new Error("Tipo de cambio no válido");
     const fetchedAt = now();
     const rateDate = String(payload.date || fetchedAt.slice(0, 10));
-    db.prepare(
+    await db.prepare(
       `INSERT INTO exchange_rates(base_currency,quote_currency,rate,provider,rate_date,fetched_at)
        VALUES (?,?,?,?,?,?)
        ON CONFLICT(base_currency,quote_currency) DO UPDATE SET
        rate=excluded.rate,provider=excluded.provider,rate_date=excluded.rate_date,fetched_at=excluded.fetched_at`,
     ).run(base, quote, rate, EXCHANGE_RATE_PROVIDER, rateDate, fetchedAt);
-    return responseData(cachedRate(base, quote));
+    return responseData(await cachedRate(base, quote));
   } catch (error) {
     if (cached) {
       return { ...responseData(cached, true), warning: "No se pudo actualizar; se usa el último cambio conocido." };

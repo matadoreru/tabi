@@ -768,6 +768,24 @@ textarea {
   border-radius: 11px;
   object-fit: cover;
 }
+.purchase-photo-button {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  padding: 0;
+  overflow: hidden;
+  cursor: zoom-in;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+}
+.purchase-photo-button img {
+  display: block;
+}
+.purchase-photo-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  outline-offset: 3px;
+}
 .purchase-photo-placeholder {
   display: grid;
   place-items: center;
@@ -1066,6 +1084,9 @@ textarea {
   height: 165px;
   background: var(--surface-2);
 }
+.place-cover.has-color {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--place-background) 78%, white), var(--place-background));
+}
 .place-cover.has-photo::after {
   content: "";
   position: absolute;
@@ -1146,21 +1167,21 @@ textarea {
   overflow-x: auto;
   max-width: 100%;
   padding: 2px 1px 10px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--muted) transparent;
+  scrollbar-width: none;
   scroll-snap-type: x proximity;
   overscroll-behavior-inline: contain;
   touch-action: pan-x;
 }
 .day-strip::-webkit-scrollbar {
-  height: 7px;
+  display: none;
 }
-.day-strip::-webkit-scrollbar-thumb {
-  background: var(--muted);
-  border-radius: 999px;
+.day-strip.dragging {
+  cursor: grabbing;
+  scroll-snap-type: none;
+  user-select: none;
 }
 .day-button {
-  flex: 0 0 66px;
+  flex: 0 0 82px;
   scroll-snap-align: start;
   border: 1px solid var(--line);
   color: var(--muted);
@@ -1171,9 +1192,14 @@ textarea {
 }
 .day-button strong {
   display: block;
-  font-size: 18px;
+  font-size: 15px;
+  text-transform: uppercase;
   color: var(--text);
   margin: 2px 0;
+}
+.day-button.today:not(.active) {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+  box-shadow: inset 0 -3px var(--primary-soft);
 }
 .day-button small {
   font-size: 10px;
@@ -1186,6 +1212,103 @@ textarea {
 }
 .day-button.active strong {
   color: #fff;
+}
+
+.lightbox-backdrop {
+  position: fixed;
+  z-index: 2000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 64px 72px 32px;
+  background: rgba(8, 9, 9, .88);
+  backdrop-filter: blur(3px);
+}
+.lightbox-toolbar {
+  position: absolute;
+  z-index: 2;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+}
+.lightbox-toolbar [data-lightbox-counter] {
+  min-width: 46px;
+  font-size: 13px;
+  text-align: center;
+}
+.lightbox-control,
+.lightbox-nav {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  cursor: pointer;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 50%;
+  background: rgba(24, 24, 24, .68);
+  font-size: 25px;
+}
+.lightbox-stage {
+  width: min(1200px, 100%);
+  height: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  touch-action: none;
+}
+.lightbox-stage.zoomed {
+  cursor: grab;
+}
+.lightbox-stage.zoomed:active {
+  cursor: grabbing;
+}
+.lightbox-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transform-origin: center;
+  transition: transform .12s ease-out;
+  user-select: none;
+}
+.lightbox-nav {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  transform: translateY(-50%);
+  font-size: 38px;
+}
+.lightbox-nav.previous {
+  left: 14px;
+}
+.lightbox-nav.next {
+  right: 14px;
+}
+@media (max-width: 640px) {
+  .lightbox-backdrop {
+    padding: 58px 12px 18px;
+  }
+  .lightbox-toolbar {
+    top: 8px;
+    right: 8px;
+  }
+  .lightbox-nav {
+    top: auto;
+    bottom: 14px;
+    transform: none;
+  }
+  .lightbox-nav.previous {
+    left: calc(50% - 58px);
+  }
+  .lightbox-nav.next {
+    right: calc(50% - 58px);
+  }
 }
 .itinerary-week-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));

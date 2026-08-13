@@ -8,6 +8,7 @@ import {
   tripCurrencyConfig,
 } from "./currency.js";
 import { countryOptions, TRIP_EMOJIS } from "./countries.js";
+import { PLACE_BACKGROUND_MODES, resolvePlaceBackground } from "./backgrounds.js";
 import {
   activityGoogleMapsUrl,
   budgetSummary,
@@ -22,6 +23,7 @@ import {
   sharedInspirationLink,
   stayBudgetAmounts,
   stayNights,
+  transportBudgetAmounts,
 } from "./domain.js";
 import { EMOJI_GROUPS } from "./emojis.js";
 import { Store } from "./store.js";
@@ -42,6 +44,7 @@ import {
 import { apiClient, ApiError } from "./api-client.js";
 import { session } from "./session.js";
 import { PERMISSIONS, ROLE_LABELS } from "./permissions.js";
+import { initializeImageLightbox } from "./lightbox.js";
 
 const store = new Store();
 const MONEY_OPTIONS = currencyOptions();
@@ -182,6 +185,33 @@ const fields = {
     {
       name: "markerIcon",
       label: "Icono del mapa",
+      type: "emoji",
+      options: EMOJI_GROUPS,
+      full: true,
+    },
+    {
+      name: "backgroundMode",
+      label: "Fondo de la tarjeta",
+      type: "select",
+      options: [
+        { value: PLACE_BACKGROUND_MODES.AUTO, label: "Imagen automática de Google" },
+        { value: PLACE_BACKGROUND_MODES.IMAGE, label: "Imagen personalizada" },
+        { value: PLACE_BACKGROUND_MODES.COLOR, label: "Color de fondo" },
+        { value: PLACE_BACKGROUND_MODES.EMOJI, label: "Emoji / icono" },
+      ],
+      full: true,
+    },
+    {
+      name: "backgroundImage",
+      label: "Imagen personalizada",
+      type: "image",
+      help: "Tiene prioridad sobre la fotografía automática mientras este modo esté seleccionado.",
+      full: true,
+    },
+    { name: "backgroundColor", label: "Color de fondo", type: "color", value: "#dce9df", full: true },
+    {
+      name: "backgroundEmoji",
+      label: "Emoji de fondo",
       type: "emoji",
       options: EMOJI_GROUPS,
       full: true,
@@ -345,6 +375,15 @@ const fields = {
     { name: "duration", label: "Duración (min)", type: "number", min: 0 },
     { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS },
     { name: "price", label: "Precio", type: "number", min: 0, step: "0.01" },
+    {
+      name: "paidAmount",
+      label: "Importe pagado",
+      type: "number",
+      min: 0,
+      step: "0.01",
+      help: "Permite distinguir el gasto real del importe aún comprometido.",
+    },
+    { name: "paymentStatus", label: "Pago", type: "select", options: ["Pendiente", "Parcial", "Pagado"] },
     { name: "reservation", label: "Reserva" },
     { name: "seat", label: "Asiento" },
     {
@@ -526,6 +565,14 @@ function normalizedStays() {
   }));
 }
 
+function normalizedTransports() {
+  return store.collection("transports").map((item) => ({
+    ...item,
+    price: itemToPrimary(item.price, item),
+    paidAmount: itemToPrimary(item.paidAmount, item),
+  }));
+}
+
 function normalizedBudgetTrip() {
   return {
     ...store.activeTrip,
@@ -533,11 +580,17 @@ function normalizedBudgetTrip() {
   };
 }
 
-function budgetChartItems(expenses, purchases = normalizedPurchases(), stays = normalizedStays()) {
+function budgetChartItems(
+  expenses,
+  purchases = normalizedPurchases(),
+  stays = normalizedStays(),
+  transports = normalizedTransports(),
+) {
   return [
     ...expenses,
     ...purchases.map((item) => ({ category: "Compras", actualAmount: Number(item.actualPrice || 0) })),
     ...stays.map((item) => ({ category: "Alojamiento", actualAmount: stayBudgetAmounts(item).paid })),
+    ...transports.map((item) => ({ category: "Transporte", actualAmount: transportBudgetAmounts(item).paid })),
   ].filter((item) => Number(item.actualAmount || 0) > 0);
 }
 
@@ -1026,7 +1079,8 @@ function renderDashboard() {
   const expenses = normalizedExpenses();
   const purchases = normalizedPurchases();
   const stays = normalizedStays();
-  const summary = budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays);
+  const transports = normalizedTransports();
+  const summary = budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays, transports);
   const pendingTasks = store.collection("tasks").filter((task) => task.status !== "Completada");
   const pendingPurchases = store.collection("purchases").filter((item) =>
     item.status === "Pendiente" || item.status === "Encontrado"
@@ -1040,7 +1094,7 @@ function renderDashboard() {
       `${a.departureDate}${a.departureTime}`.localeCompare(`${b.departureDate}${b.departureTime}`)
     )[0];
   const countdown = daysUntil(trip.startDate);
-  const categoryTotals = groupTotals(budgetChartItems(expenses, purchases, stays), "category");
+  const categoryTotals = groupTotals(budgetChartItems(expenses, purchases, stays, transports), "category");
   const max = Math.max(...categoryTotals.map(([, value]) => value), 1);
   return `<div class="section-stack">
     <section class="hero card"><div><div class="hero-eyebrow">${
@@ -1412,12 +1466,20 @@ function renderItinerary() {
     view === "week" ? "active" : ""
   }">🗓️ Semana</button><button data-itinerary-view="overview" class="${
     view === "overview" ? "active" : ""
-  }">🧭 General</button></div>${addAction("itinerary", "Añadir actividad")}</div><div class="day-strip">${
-    dates.map((item, index) =>
-      `<button class="day-button ${item === date ? "active" : ""}" data-date="${item}"><small>${
-        new Intl.DateTimeFormat("es-ES", { weekday: "short" }).format(new Date(`${item}T12:00`))
-      }</small><strong>${item.slice(-2)}</strong><small>Día ${index + 1}</small></button>`
-    ).join("")
+  }">🧭 General</button></div>${
+    addAction("itinerary", "Añadir actividad")
+  }</div><div class="day-strip" role="tablist" aria-label="Días del viaje">${
+    dates.map((item) => {
+      const parsed = new Date(`${item}T12:00`);
+      const selected = item === date;
+      return `<button class="day-button ${selected ? "active" : ""} ${
+        item === todayIso() ? "today" : ""
+      }" data-date="${item}" role="tab" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}"><small>${
+        new Intl.DateTimeFormat("es-ES", { weekday: "short" }).format(parsed)
+      }</small><strong>${
+        new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short" }).format(parsed)
+      }</strong></button>`;
+    }).join("")
   }</div><div class="section-title"><div><h2>${fullDate(date)}</h2><p>Día ${
     dates.indexOf(date) + 1
   } de ${dates.length}</p></div></div>${body}`;
@@ -1436,13 +1498,23 @@ function renderPlaces() {
   return `${
     toolbar(["Todos", ...CATEGORIES.place], `${photoAction}${addAction("places", "Añadir lugar")}`)
   }<div class="grid place-grid">${
-    places.map((place) =>
-      `<article class="card place-card"><div class="place-cover ${place.photoUrl ? "has-photo" : ""}">${
-        place.photoUrl ? `<img class="place-cover-photo" src="${esc(place.photoUrl)}" alt="${esc(place.name)}">` : ""
-      }<span>${badge(place.status)}</span><span class="place-symbol">${placeEmoji(place.category)}</span><span>${
+    places.map((place) => {
+      const background = resolvePlaceBackground(place, placeEmoji(place.category));
+      const hasImage = background.type === "image";
+      const coverSymbol = ["emoji", "fallback"].includes(background.type)
+        ? background.value
+        : place.backgroundEmoji || placeEmoji(place.category);
+      const colorStyle = background.type === "color" ? ` style="--place-background:${esc(background.value)}"` : "";
+      return `<article class="card place-card"><div class="place-cover ${hasImage ? "has-photo" : ""} ${
+        background.type === "color" ? "has-color" : ""
+      }"${colorStyle}>${
+        hasImage
+          ? `<img class="place-cover-photo" src="${esc(background.value)}" alt="Fondo de ${esc(place.name)}">`
+          : ""
+      }<span>${badge(place.status)}</span><span class="place-symbol">${esc(coverSymbol)}</span><span>${
         badge(place.priority, place.priority === "Alta" || place.priority === "Imprescindible" ? "red" : "")
       }</span>${
-        place.photoUrl
+        hasImage && background.automatic
           ? `<a class="place-photo-credit" href="${
             esc(place.photoAttributionUrl || place.link || "#")
           }" target="_blank" rel="noreferrer">Foto: ${esc(place.photoAttributionName || "Google Maps")}</a>`
@@ -1455,8 +1527,8 @@ function renderPlaces() {
         esc(place.area)
       }</span><button class="btn btn-ghost icon-btn" data-edit="places:${place.id}">${
         icon("edit")
-      }</button></div></div></article>`
-    ).join("") || emptyState("No hay lugares", "Prueba otro filtro o añade un lugar nuevo.")
+      }</button></div></div></article>`;
+    }).join("") || emptyState("No hay lugares", "Prueba otro filtro o añade un lugar nuevo.")
   }</div>`;
 }
 function placeEmoji(category) {
@@ -1768,6 +1840,32 @@ function initializePlaceDuplicateCheck(root, item) {
 function initializePlaceEditor(root, item) {
   initializePlaceLinkImport(root);
   initializePlaceDuplicateCheck(root, item);
+  const mode = root.querySelector("#field-backgroundMode");
+  const fieldsByMode = {
+    [PLACE_BACKGROUND_MODES.IMAGE]: "backgroundImage",
+    [PLACE_BACKGROUND_MODES.COLOR]: "backgroundColor",
+    [PLACE_BACKGROUND_MODES.EMOJI]: "backgroundEmoji",
+  };
+  const updateAppearanceFields = () => {
+    Object.values(fieldsByMode).forEach((name) => {
+      const field = root.querySelector(`[data-field="${name}"]`);
+      if (field) field.hidden = fieldsByMode[mode?.value] !== name;
+    });
+  };
+  root.querySelector("#field-backgroundImage")?.addEventListener("input", () => {
+    if (mode && root.querySelector("#field-backgroundImage")?.value) mode.value = PLACE_BACKGROUND_MODES.IMAGE;
+    updateAppearanceFields();
+  });
+  root.querySelector("#field-backgroundColor")?.addEventListener("input", () => {
+    if (mode) mode.value = PLACE_BACKGROUND_MODES.COLOR;
+    updateAppearanceFields();
+  });
+  root.querySelector("#field-backgroundEmoji")?.addEventListener("input", () => {
+    if (mode) mode.value = PLACE_BACKGROUND_MODES.EMOJI;
+    updateAppearanceFields();
+  });
+  mode?.addEventListener("change", updateAppearanceFields);
+  updateAppearanceFields();
 }
 
 function initializeActivityLinks(root) {
@@ -1958,9 +2056,6 @@ function initializeStayFields(root) {
   const checkOut = root.querySelector("#field-checkOutDate");
   const platform = root.querySelector("#field-platform");
   const link = root.querySelector("#field-link");
-  const price = root.querySelector("#field-price");
-  const paidAmount = root.querySelector("#field-paidAmount");
-  const paymentStatus = root.querySelector("#field-paymentStatus");
   checkIn?.addEventListener("change", () => {
     if (checkIn.value && (!checkOut.value || checkOut.value < checkIn.value)) {
       checkOut.value = addDaysIso(checkIn.value, 1);
@@ -1975,6 +2070,13 @@ function initializeStayFields(root) {
       : "https://…";
   });
   platform?.dispatchEvent(new Event("change"));
+  initializePaymentFields(root);
+}
+
+function initializePaymentFields(root) {
+  const price = root.querySelector("#field-price");
+  const paidAmount = root.querySelector("#field-paidAmount");
+  const paymentStatus = root.querySelector("#field-paymentStatus");
   const syncPayment = (source) => {
     const total = Math.max(0, Number(price?.value || 0));
     const paid = Math.max(0, Number(paidAmount?.value || 0));
@@ -2026,6 +2128,7 @@ function initializeTransportFields(root) {
   [departureDate, departureTime, arrivalDate, arrivalTime].forEach((input) =>
     input?.addEventListener("change", calculate)
   );
+  initializePaymentFields(root);
 }
 
 async function initializeGoogleMap() {
@@ -2299,7 +2402,11 @@ function renderPurchases() {
       items.map((i) =>
         `<tr><td><div class="purchase-product">${
           i.photo
-            ? `<img src="${esc(i.photo)}" alt="Foto de ${esc(i.product)}">`
+            ? `<button class="purchase-photo-button" type="button" data-lightbox="purchase-${
+              esc(i.id)
+            }" aria-label="Ampliar foto de ${esc(i.product)}"><img src="${esc(i.photo)}" alt="Foto de ${
+              esc(i.product)
+            }"></button>`
             : `<span class="purchase-photo-placeholder">${icon("bag")}</span>`
         }<span><span class="cell-main">${esc(i.product)}</span><span class="cell-sub">${esc(i.category)} · para ${
           esc(i.recipient || "—")
@@ -2400,9 +2507,10 @@ function renderBudget() {
     purchases = normalizedPurchases(),
     funds = store.collection("funds"),
     stays = normalizedStays(),
-    summary = budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays),
+    transports = normalizedTransports(),
+    summary = budgetSummary(normalizedBudgetTrip(), expenses, purchases, normalizedFunds(), stays, transports),
     percent = Math.min(100, summary.spent / Math.max(1, summary.budget) * 100),
-    totals = groupTotals(budgetChartItems(expenses, purchases, stays), "category"),
+    totals = groupTotals(budgetChartItems(expenses, purchases, stays, transports), "category"),
     max = Math.max(...totals.map(([, v]) => v), 1);
   const items = filtered(
     store.collection("expenses").map((expense) => ({
@@ -2428,7 +2536,9 @@ function renderBudget() {
       "users",
       "Por persona",
       money(summary.perPerson),
-      `Incluye ${primaryMoney(summary.lodgingSpent)} de alojamiento`,
+      `Incluye ${primaryMoney(summary.lodgingSpent)} de alojamiento y ${
+        primaryMoney(summary.transportSpent)
+      } de transporte`,
       "",
       true,
     )
@@ -2437,7 +2547,9 @@ function renderBudget() {
       "clock",
       "Pendiente de pagar",
       money(summary.committed),
-      `${primaryMoney(summary.lodgingCommitted)} de alojamiento`,
+      `${primaryMoney(summary.lodgingCommitted)} de alojamiento · ${
+        primaryMoney(summary.transportCommitted)
+      } de transporte`,
       "amber",
       true,
     )
@@ -2570,7 +2682,7 @@ function renderTransport() {
     );
   return `${toolbar(["Todos", ...CATEGORIES.transport], addAction("transport", "Añadir transporte"))}${
     table(
-      ["Trayecto", "Salida", "Llegada", "Duración", "Importe", "Reserva", "Estado"],
+      ["Trayecto", "Salida", "Llegada", "Duración", "Importe", "Pago", "Reserva", "Estado"],
       items.map((i) =>
         `<tr><td><span class="cell-main">${esc(i.origin)} ${icon("arrow")} ${
           esc(i.destination)
@@ -2580,6 +2692,10 @@ function renderTransport() {
           formatDate(i.arrivalDate)
         }<span class="cell-sub">${esc(i.arrivalTime)}</span></td><td>${durationLabel(i.duration)}</td><td>${
           itemMoney(i.price, i)
+        }</td><td>${badge(i.paymentStatus || (i.status === "Realizado" ? "Pagado" : "Pendiente"))}${
+          Number(i.paidAmount || 0) > 0 && i.paymentStatus !== "Pagado"
+            ? `<span class="cell-sub">${itemMoney(i.paidAmount, i)} pagado</span>`
+            : ""
         }</td><td>${esc(i.reservation || "Sin referencia")}${
           copyReferenceButton("transports", i, "reservation")
         }<span class="cell-sub">${esc(i.seat || "")}</span>${
@@ -2932,6 +3048,7 @@ function openEditor(collection, idValue) {
       departureDate: activeDate(),
       arrivalDate: activeDate(),
       status: "Por reservar",
+      paymentStatus: "Pendiente",
       currency: store.activeTrip.currency,
     },
     reservation: {
@@ -2996,6 +3113,14 @@ function openEditor(collection, idValue) {
       ) {
         throw new Error("La llegada del transporte no puede ser anterior a la salida.");
       }
+      if (type === "transport") {
+        const total = Number(values.price || 0);
+        const paid = Number(values.paidAmount || 0);
+        if (paid > total) throw new Error("El importe pagado no puede superar el precio total del transporte.");
+        if (values.paymentStatus === "Pagado") values.paidAmount = total;
+        else if (paid > 0) values.paymentStatus = paid >= total && total > 0 ? "Pagado" : "Parcial";
+        else values.paymentStatus = "Pendiente";
+      }
       if (type === "note" && !item) values.order = defaults.order;
       try {
         item ? await store.edit(collection, item.id, values) : await store.add(collection, values);
@@ -3031,6 +3156,7 @@ function openEditor(collection, idValue) {
 }
 
 function bindCommon() {
+  initializeImageLightbox(app);
   app.querySelectorAll(".place-cover-photo").forEach((image) =>
     image.addEventListener("error", () => {
       const cover = image.closest(".place-cover");
@@ -3130,8 +3256,7 @@ function bindRoute() {
   const dayStrip = app.querySelector(".day-strip");
   const activeDay = dayStrip?.querySelector(".day-button.active");
   if (dayStrip && activeDay) {
-    dayStrip.scrollLeft = activeDay.offsetLeft - dayStrip.offsetLeft -
-      (dayStrip.clientWidth - activeDay.clientWidth) / 2;
+    requestAnimationFrame(() => activeDay.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" }));
     dayStrip.addEventListener("wheel", (event) => {
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
       const maxScroll = dayStrip.scrollWidth - dayStrip.clientWidth;
@@ -3141,6 +3266,36 @@ function bindRoute() {
       event.preventDefault();
       dayStrip.scrollLeft += event.deltaY;
     }, { passive: false });
+    let dragging = false;
+    let dragged = false;
+    let startX = 0;
+    let startScroll = 0;
+    dayStrip.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "touch") return;
+      dragging = true;
+      dragged = false;
+      startX = event.clientX;
+      startScroll = dayStrip.scrollLeft;
+      dayStrip.classList.add("dragging");
+      dayStrip.setPointerCapture(event.pointerId);
+    });
+    dayStrip.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      if (Math.abs(event.clientX - startX) > 5) dragged = true;
+      dayStrip.scrollLeft = startScroll - (event.clientX - startX);
+    });
+    const stopDragging = () => {
+      dragging = false;
+      dayStrip.classList.remove("dragging");
+    };
+    dayStrip.addEventListener("pointerup", stopDragging);
+    dayStrip.addEventListener("pointercancel", stopDragging);
+    dayStrip.addEventListener("click", (event) => {
+      if (!dragged) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dragged = false;
+    }, true);
   }
   app.querySelectorAll("[data-itinerary-view]").forEach((button) =>
     button.addEventListener("click", () => {

@@ -3,7 +3,14 @@ import { APPLICATION_COMMIT } from "./version.js";
 const configuredPublicOrigin = Deno.env.get("TABI_PUBLIC_ORIGIN")?.trim();
 
 export const CONFIG = Object.freeze({
-  databasePath: Deno.env.get("TABI_DATABASE_PATH") || "./data/tabi.sqlite",
+  postgres: Object.freeze({
+    host: Deno.env.get("TABI_POSTGRES_HOST") || "127.0.0.1",
+    port: Number(Deno.env.get("TABI_POSTGRES_PORT") || 5432),
+    database: Deno.env.get("TABI_POSTGRES_DB") || "tabi",
+    user: Deno.env.get("TABI_POSTGRES_USER") || "tabi",
+    password: Deno.env.get("TABI_POSTGRES_PASSWORD") || "",
+    maxConnections: Number(Deno.env.get("TABI_POSTGRES_POOL_SIZE") || 10),
+  }),
   publicOrigin: configuredPublicOrigin ? new URL(configuredPublicOrigin).origin : "",
   googleMapsApiKey: Deno.env.get("TABI_GOOGLE_MAPS_API_KEY")?.trim() || "",
   googleMapsMapId: Deno.env.get("TABI_GOOGLE_MAPS_MAP_ID")?.trim() || "",
