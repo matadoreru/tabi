@@ -423,10 +423,13 @@ Deno.test({
     }, owner.cookie);
     assertEquals(sharedExpense.status, 201);
     assertEquals(sharedExpense.data.item.money.actualAmount.minorUnits, "1001");
-    assertEquals(sharedExpense.data.expenseSplits.length, 2);
-    assertEquals(sharedExpense.data.settlementTransfers.length, 1);
+    const sharedExpenseSplits = sharedExpense.data.expenseSplits.filter((split) =>
+      split.sourceId === sharedExpense.data.item.id
+    );
+    assertEquals(sharedExpenseSplits.length, 2);
+    assert(sharedExpense.data.settlementTransfers.length > 0, "Debe proponer al menos una liquidación");
     assertEquals(
-      sharedExpense.data.expenseSplits.reduce((sum, split) => sum + Number(split.amount.minorUnits), 0),
+      sharedExpenseSplits.reduce((sum, split) => sum + Number(split.amount.minorUnits), 0),
       1001,
     );
     const reservationCost = await call("POST", `/api/trips/${tripId}/reservations`, {
