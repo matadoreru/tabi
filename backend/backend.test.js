@@ -67,7 +67,7 @@ async function call(method, path, payload, cookie = "", origin = "https://tabi.e
   });
   let response;
   try {
-    response = await api(request, path);
+    response = await api(request, new URL(request.url).pathname);
   } catch (error) {
     response = handleError(error);
   }
