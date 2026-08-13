@@ -43,15 +43,28 @@ function databaseParameters(parameters) {
   );
 }
 
+function normalizeJsonColumns(row) {
+  if (!row) return row;
+  for (const column of ["data", "metadata"]) {
+    if (typeof row[column] !== "string") continue;
+    try {
+      row[column] = JSON.parse(row[column]);
+    } catch {
+      // Una consulta puede usar estos alias para texto no JSON; en ese caso se conserva el valor original.
+    }
+  }
+  return row;
+}
+
 function statement(source) {
   const query = postgresQuery(source);
   return {
     async get(...parameters) {
       const rows = await activeSql().unsafe(query, databaseParameters(parameters));
-      return rows[0];
+      return normalizeJsonColumns(rows[0]);
     },
     async all(...parameters) {
-      return [...await activeSql().unsafe(query, databaseParameters(parameters))];
+      return [...await activeSql().unsafe(query, databaseParameters(parameters))].map(normalizeJsonColumns);
     },
     async run(...parameters) {
       const rows = await activeSql().unsafe(query, databaseParameters(parameters));
