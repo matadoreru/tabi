@@ -53,7 +53,7 @@ const ui = {
   route: location.hash.slice(1) || "dashboard",
   query: "",
   selectedDate: "",
-  itineraryView: "day",
+  itineraryScrollLeft: null,
   mapPlaceId: "",
   mapSidebarOpen: false,
   filter: "Todos",
@@ -68,13 +68,13 @@ const NAV = [
   ["itinerary", "Itinerario", "calendar"],
   ["map", "Mapa", "map"],
   ["places", "Lugares", "pin"],
+  ["reservations", "Reservas", "ticket"],
+  ["stays", "Hospedaje", "bed"],
+  ["transport", "Transporte", "train"],
+  ["budget", "Presupuesto", "wallet"],
   ["purchases", "Compras", "bag"],
   ["tasks", "TODO", "check"],
   ["notes", "Notas", "note"],
-  ["budget", "Presupuesto", "wallet"],
-  ["stays", "Hospedaje", "bed"],
-  ["transport", "Transporte", "train"],
-  ["reservations", "Reservas", "ticket"],
   ["inspiration", "Inspiración", "play"],
   ["settings", "Configuración", "settings"],
 ];
@@ -587,11 +587,12 @@ function budgetChartItems(
   transports = normalizedTransports(),
 ) {
   return [
+    ...CATEGORIES.expense.map((category) => ({ category, actualAmount: 0 })),
     ...expenses,
     ...purchases.map((item) => ({ category: "Compras", actualAmount: Number(item.actualPrice || 0) })),
-    ...stays.map((item) => ({ category: "Alojamiento", actualAmount: stayBudgetAmounts(item).paid })),
+    ...stays.map((item) => ({ category: "Hoteles", actualAmount: stayBudgetAmounts(item).paid })),
     ...transports.map((item) => ({ category: "Transporte", actualAmount: transportBudgetAmounts(item).paid })),
-  ].filter((item) => Number(item.actualAmount || 0) > 0);
+  ];
 }
 
 function applyTheme() {
@@ -917,6 +918,7 @@ async function enterTrip(tripId, route = "dashboard") {
     const payload = await store.loadTrip(tripId, handleRemoteChange);
     session.selectTrip(payload);
     ui.selectedDate = "";
+    ui.itineraryScrollLeft = null;
     ui.route = route;
     location.hash = route;
     render();
@@ -1389,84 +1391,52 @@ function renderItinerary() {
   const items = activitiesForDate(date);
   const analysis = itineraryAnalysis(items);
   const conflictIds = new Set(analysis.conflicts.flatMap((item) => [item.first.id, item.second.id]));
-  const view = ui.itineraryView;
-  let body;
-  if (view === "overview") {
-    body = `<div class="grid grid-3">${
-      dates.map((day, index) => {
-        const list = activitiesForDate(day);
-        return `<button class="card card-pad" style="text-align:left;cursor:pointer;color:inherit" data-go-date="${day}"><div class="card-head"><div><h3>Día ${
-          index + 1
-        }</h3><p>${fullDate(day)}</p></div>${
-          badge(`${list.length} planes`, list.length > 7 ? "amber" : "green")
-        }</div>${miniTimeline(list.slice(0, 3), false)}</button>`;
+  const body = `<div class="planner-layout"><section class="card planner">${
+    analysis.sorted.length
+      ? analysis.sorted.map((item) => {
+        const display = activityDisplay(item);
+        return `<div class="planner-event"><div class="planner-time">${esc(item.start)}<br><small>${
+          esc(item.end)
+        }</small></div><div class="event-card ${conflictIds.has(item.id) ? "conflict" : ""}" ${
+          item.virtual ? "" : `draggable="true" data-drag-id="${item.id}"`
+        } data-edit-activity="${item.id}"><span class="drag-handle" title="${
+          item.virtual ? "Elemento sincronizado" : "Arrastrar para reordenar"
+        }">${item.virtual ? "•" : icon("grip")}</span><div class="event-body"><strong>${
+          esc(item.title)
+        }</strong><small>${esc(display.primary)} · ${durationLabel(timeDiff(item.start, item.end))}</small>${
+          display.secondary ? `<span class="event-context">${esc(display.secondary)}</span>` : ""
+        }</div>${activityMapsButton(item)}${
+          item.virtual ? badge("Sincronizado", "blue") : badge(item.status === "done" ? "Realizado" : display.kind)
+        }</div></div>`;
       }).join("")
-    }</div>`;
-  } else if (view === "week") {
-    const index = dates.indexOf(date);
-    const week = dates.slice(Math.floor(index / 7) * 7, Math.floor(index / 7) * 7 + 7);
-    body = `<div class="grid itinerary-week-grid">${
-      week.map((day) =>
-        `<button class="card card-pad" style="text-align:left;cursor:pointer;color:inherit" data-go-date="${day}"><div class="card-head"><div><h3>${
-          fullDate(day)
-        }</h3><p>${activitiesForDate(day).length} actividades</p></div></div>${
-          miniTimeline(activitiesForDate(day).slice(0, 4), false)
-        }</button>`
+      : emptyState(
+        "Este día está por escribir",
+        "Añade una actividad o conserva el espacio para improvisar.",
+        `<button class="btn btn-primary" data-add="itinerary">${icon("plus")} Crear el primer plan</button>`,
+      )
+  }</section><aside class="section-stack planner-insights"><section class="card card-pad"><div class="card-head"><div><h3>Análisis del día</h3><p>${
+    durationLabel(analysis.plannedMinutes)
+  } planificados</p></div></div><div class="section-stack">${
+    analysis.conflicts.length
+      ? analysis.conflicts.map((c) =>
+        `<div class="insight warning">${icon("alert")}<div><strong>Solapamiento de ${c.overlap} min</strong>${
+          esc(c.first.title)
+        } y ${esc(c.second.title)}</div></div>`
       ).join("")
-    }</div>`;
-  } else {body = `<div class="planner-layout"><section class="card planner">${
-      analysis.sorted.length
-        ? analysis.sorted.map((item) => {
-          const display = activityDisplay(item);
-          return `<div class="planner-event"><div class="planner-time">${esc(item.start)}<br><small>${
-            esc(item.end)
-          }</small></div><div class="event-card ${conflictIds.has(item.id) ? "conflict" : ""}" ${
-            item.virtual ? "" : `draggable="true" data-drag-id="${item.id}"`
-          } data-edit-activity="${item.id}"><span class="drag-handle" title="${
-            item.virtual ? "Elemento sincronizado" : "Arrastrar para reordenar"
-          }">${item.virtual ? "•" : icon("grip")}</span><div class="event-body"><strong>${
-            esc(item.title)
-          }</strong><small>${esc(display.primary)} · ${durationLabel(timeDiff(item.start, item.end))}</small>${
-            display.secondary ? `<span class="event-context">${esc(display.secondary)}</span>` : ""
-          }</div>${activityMapsButton(item)}${
-            item.virtual ? badge("Sincronizado", "blue") : badge(item.status === "done" ? "Realizado" : display.kind)
-          }</div></div>`;
-        }).join("")
-        : emptyState(
-          "Este día está por escribir",
-          "Añade una actividad o conserva el espacio para improvisar.",
-          `<button class="btn btn-primary" data-add="itinerary">${icon("plus")} Crear el primer plan</button>`,
-        )
-    }</section><aside class="section-stack planner-insights"><section class="card card-pad"><div class="card-head"><div><h3>Análisis del día</h3><p>${
-      durationLabel(analysis.plannedMinutes)
-    } planificados</p></div></div><div class="section-stack">${
-      analysis.conflicts.length
-        ? analysis.conflicts.map((c) =>
-          `<div class="insight warning">${icon("alert")}<div><strong>Solapamiento de ${c.overlap} min</strong>${
-            esc(c.first.title)
-          } y ${esc(c.second.title)}</div></div>`
-        ).join("")
-        : `<div class="insight">${
-          icon("check")
-        }<div><strong>Horarios compatibles</strong>No hay actividades solapadas.</div></div>`
-    }${
-      analysis.warnings.map((warning) =>
-        `<div class="insight warning">${icon("alert")}<div>${esc(warning)}</div></div>`
-      ).join("")
-    }</div></section><section class="card card-pad"><div class="card-head"><div><h3>Tiempo libre</h3><p>Huecos entre actividades</p></div></div><div class="item-list">${
-      analysis.gaps.filter((g) => g.available >= 30).slice(0, 4).map((g) =>
-        `<div class="list-item"><span class="stat-icon">${icon("clock")}</span><div class="list-item-main"><strong>${
-          durationLabel(g.available)
-        }</strong><small>Después de ${esc(g.first.title)}</small></div></div>`
-      ).join("") || "<p style='color:var(--muted)'>No hay huecos de 30 minutos o más.</p>"
-    }</div></section></aside></div>`;}
-  return `<div class="toolbar"><div class="segmented"><button data-itinerary-view="day" class="${
-    view === "day" ? "active" : ""
-  }">☀️ Día</button><button data-itinerary-view="week" class="${
-    view === "week" ? "active" : ""
-  }">🗓️ Semana</button><button data-itinerary-view="overview" class="${
-    view === "overview" ? "active" : ""
-  }">🧭 General</button></div>${
+      : `<div class="insight">${
+        icon("check")
+      }<div><strong>Horarios compatibles</strong>No hay actividades solapadas.</div></div>`
+  }${
+    analysis.warnings.map((warning) => `<div class="insight warning">${icon("alert")}<div>${esc(warning)}</div></div>`)
+      .join("")
+  }</div></section><section class="card card-pad"><div class="card-head"><div><h3>Tiempo libre</h3><p>Huecos entre actividades</p></div></div><div class="item-list">${
+    analysis.gaps.filter((g) => g.available >= 30).slice(0, 4).map((g) =>
+      `<div class="list-item"><span class="stat-icon">${icon("clock")}</span><div class="list-item-main"><strong>${
+        durationLabel(g.available)
+      }</strong><small>Después de ${esc(g.first.title)}</small></div></div>`
+    ).join("") || "<p style='color:var(--muted)'>No hay huecos de 30 minutos o más.</p>"
+  }</div></section></aside></div>`;
+  return `<div class="toolbar itinerary-toolbar">${
     addAction("itinerary", "Añadir actividad")
   }</div><div class="day-strip" role="tablist" aria-label="Días del viaje">${
     dates.map((item) => {
@@ -1592,13 +1562,36 @@ function googlePlaceCity(place) {
 
 function googlePlacePhoto(place) {
   const photo = place.photos?.[0];
-  if (!photo?.getURI) return {};
+  if (!photo) return {};
   const attribution = photo.authorAttributions?.[0];
+  let photoUrl = "";
+  try {
+    if (typeof photo.getURI === "function") photoUrl = photo.getURI({ maxWidth: 1200, maxHeight: 720 });
+    else if (typeof photo.getUrl === "function") photoUrl = photo.getUrl({ maxWidth: 1200, maxHeight: 720 });
+  } catch {
+    return {};
+  }
+  if (!photoUrl) return {};
   return {
-    photoUrl: photo.getURI({ maxWidth: 1200, maxHeight: 720 }),
+    photoUrl,
     photoAttributionName: attribution?.displayName || "Google Maps",
     photoAttributionUrl: attribution?.uri || place.googleMapsURI || "",
   };
+}
+
+function updateGooglePhotoPreview(root, photoUrl = "") {
+  let preview = root.querySelector("[data-google-photo-preview]");
+  if (!preview) {
+    preview = document.createElement("div");
+    preview.className = "google-photo-preview full";
+    preview.dataset.googlePhotoPreview = "";
+    root.querySelector('[data-field="backgroundMode"]')?.insertAdjacentElement("afterend", preview);
+  }
+  preview.innerHTML = photoUrl
+    ? `<img src="${
+      esc(photoUrl)
+    }" alt="Fotografía automática obtenida de Google Maps"><div><strong>Foto automática disponible</strong><small>Se utilizará como fondo mientras mantengas seleccionado “Imagen automática de Google”.</small></div>`
+    : `<div><strong>Sin foto automática</strong><small>Google Maps no ha devuelto fotografías para este lugar. Se utilizará el fondo visual habitual.</small></div>`;
 }
 
 function googleMapsPlaceLink(value) {
@@ -1758,7 +1751,7 @@ async function googlePlaceFromLink(value) {
   return { place, resolved };
 }
 
-function initializePlaceLinkImport(root) {
+function initializePlaceLinkImport(root, item) {
   const input = root.querySelector("#field-link");
   if (!input) return;
   const initialLink = input.value;
@@ -1783,6 +1776,7 @@ function initializePlaceLinkImport(root) {
     try {
       const { place, resolved } = await googlePlaceFromLink(input.value);
       const category = googlePlaceCategory(place.primaryType);
+      const photo = googlePlacePhoto(place);
       const values = {
         name: place.displayName || "",
         city: googlePlaceCity(place),
@@ -1793,12 +1787,17 @@ function initializePlaceLinkImport(root) {
         lat: place.location.lat(),
         lng: place.location.lng(),
         link: place.googleMapsURI || resolved,
-        ...googlePlacePhoto(place),
+        ...photo,
       };
+      const backgroundMode = root.querySelector("#field-backgroundMode");
+      if (backgroundMode && (!item?.backgroundMode || item.backgroundMode === PLACE_BACKGROUND_MODES.AUTO)) {
+        values.backgroundMode = PLACE_BACKGROUND_MODES.AUTO;
+      }
       Object.entries(values).forEach(([name, value]) => {
         setFormValue(root, name, value);
       });
-      toast("Datos del lugar completados");
+      updateGooglePhotoPreview(root, photo.photoUrl);
+      toast(photo.photoUrl ? "Datos y fotografía del lugar completados" : "Datos completados; Google no tiene fotos");
     } catch (error) {
       toast(error.message || "No se han podido obtener los datos del enlace.", "error");
     } finally {
@@ -1838,7 +1837,7 @@ function initializePlaceDuplicateCheck(root, item) {
 }
 
 function initializePlaceEditor(root, item) {
-  initializePlaceLinkImport(root);
+  initializePlaceLinkImport(root, item);
   initializePlaceDuplicateCheck(root, item);
   const mode = root.querySelector("#field-backgroundMode");
   const fieldsByMode = {
@@ -1866,6 +1865,7 @@ function initializePlaceEditor(root, item) {
   });
   mode?.addEventListener("change", updateAppearanceFields);
   updateAppearanceFields();
+  if (item?.photoUrl) updateGooglePhotoPreview(root, item.photoUrl);
 }
 
 function initializeActivityLinks(root) {
@@ -2512,11 +2512,30 @@ function renderBudget() {
     percent = Math.min(100, summary.spent / Math.max(1, summary.budget) * 100),
     totals = groupTotals(budgetChartItems(expenses, purchases, stays, transports), "category"),
     max = Math.max(...totals.map(([, v]) => v), 1);
+  const expenseItems = store.collection("expenses").map((expense) => ({
+    ...expense,
+    sourceCollection: "expenses",
+    paidByName: memberName(expense.paidByUserId, expense.person || "Fondo común"),
+  }));
+  const transportItems = store.collection("transports").map((transport) => {
+    const amounts = transportBudgetAmounts(transport);
+    return {
+      ...transport,
+      sourceCollection: "transports",
+      title: `${transport.origin} → ${transport.destination}`,
+      category: "Transporte",
+      city: [transport.type, transport.operator].filter(Boolean).join(" · "),
+      date: transport.departureDate,
+      estimatedAmount: amounts.total,
+      actualAmount: amounts.paid,
+      paidByName: "Trayecto guardado",
+      paymentStatus: transport.status === "Cancelado"
+        ? "Cancelado"
+        : transport.paymentStatus || (transport.status === "Realizado" ? "Pagado" : "Pendiente"),
+    };
+  });
   const items = filtered(
-    store.collection("expenses").map((expense) => ({
-      ...expense,
-      paidByName: memberName(expense.paidByUserId, expense.person || "Fondo común"),
-    })),
+    [...expenseItems, ...transportItems],
     ["title", "category", "city", "paidByName"],
   );
   return `<div class="grid dashboard-grid"><div class="section-stack"><section class="card card-pad budget-hero"><div><span class="hero-eyebrow" style="color:var(--muted)">Fondos disponibles</span><div class="stat-value" style="font-size:36px">${
@@ -2588,7 +2607,7 @@ function renderBudget() {
         }</span></td><td>${formatDate(i.date)}</td><td>${esc(i.paidByName)}</td><td>${
           itemMoney(i.estimatedAmount, i)
         }</td><td>${itemMoney(i.actualAmount, i)}</td><td>${badge(i.paymentStatus)}</td><td>${
-          actions("expenses", i.id)
+          actions(i.sourceCollection, i.id)
         }</td></tr>`
       ),
       "No hay movimientos",
@@ -3243,7 +3262,7 @@ function bindRoute() {
   app.querySelectorAll("[data-go-date]").forEach((button) =>
     button.addEventListener("click", () => {
       ui.selectedDate = button.dataset.goDate;
-      ui.itineraryView = "day";
+      ui.itineraryScrollLeft = null;
       location.hash = "itinerary";
     })
   );
@@ -3256,7 +3275,25 @@ function bindRoute() {
   const dayStrip = app.querySelector(".day-strip");
   const activeDay = dayStrip?.querySelector(".day-button.active");
   if (dayStrip && activeDay) {
-    requestAnimationFrame(() => activeDay.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" }));
+    if (ui.itineraryScrollLeft === null) {
+      requestAnimationFrame(() => {
+        dayStrip.scrollLeft = activeDay.offsetLeft - (dayStrip.clientWidth - activeDay.clientWidth) / 2;
+        ui.itineraryScrollLeft = dayStrip.scrollLeft;
+      });
+    } else {
+      dayStrip.scrollLeft = ui.itineraryScrollLeft;
+      requestAnimationFrame(() => {
+        const dayLeft = activeDay.offsetLeft;
+        const dayRight = dayLeft + activeDay.offsetWidth;
+        const viewLeft = dayStrip.scrollLeft;
+        const viewRight = viewLeft + dayStrip.clientWidth;
+        if (dayLeft < viewLeft) dayStrip.scrollTo({ left: dayLeft, behavior: "smooth" });
+        else if (dayRight > viewRight) {
+          dayStrip.scrollTo({ left: dayRight - dayStrip.clientWidth, behavior: "smooth" });
+        }
+      });
+    }
+    dayStrip.addEventListener("scroll", () => ui.itineraryScrollLeft = dayStrip.scrollLeft, { passive: true });
     dayStrip.addEventListener("wheel", (event) => {
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
       const maxScroll = dayStrip.scrollWidth - dayStrip.clientWidth;
@@ -3297,12 +3334,6 @@ function bindRoute() {
       dragged = false;
     }, true);
   }
-  app.querySelectorAll("[data-itinerary-view]").forEach((button) =>
-    button.addEventListener("click", () => {
-      ui.itineraryView = button.dataset.itineraryView;
-      render();
-    })
-  );
   app.querySelectorAll("[data-edit-activity]").forEach((card) =>
     card.addEventListener("click", () => {
       if (!card.dataset.editActivity.startsWith("virtual")) openEditor("activities", card.dataset.editActivity);
@@ -3583,6 +3614,7 @@ function editTrip() {
       const payload = await store.loadTrip(trip.id, handleRemoteChange);
       session.selectTrip(payload);
       ui.selectedDate = "";
+      ui.itineraryScrollLeft = null;
       toast("Viaje actualizado");
       render();
     },
@@ -3646,6 +3678,7 @@ async function importProject(file) {
     const payload = await store.loadTrip(store.activeTrip.id, handleRemoteChange);
     session.selectTrip(payload);
     ui.selectedDate = "";
+    ui.itineraryScrollLeft = null;
     toast(
       result.warnings?.length
         ? `${result.imported} elementos importados · ${result.warnings.length} vínculos pendientes`

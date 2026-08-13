@@ -139,3 +139,44 @@ Deno.test("compras e itinerario incorporan visor y selector horizontal accesible
     throw new Error("El selector de días debe exponer semántica de pestañas");
   }
 });
+
+Deno.test("Presupuesto muestra trayectos y Google Places confirma la foto automática", async () => {
+  const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (!source.includes('sourceCollection: "transports"') || !source.includes('category: "Transporte"')) {
+    throw new Error("Los transportes guardados deben mostrarse como movimientos del presupuesto");
+  }
+  if (!source.includes("updateGooglePhotoPreview(root, photo.photoUrl)")) {
+    throw new Error("El formulario debe confirmar visualmente la fotografía obtenida de Google Places");
+  }
+  if (!source.includes("backgroundMode = PLACE_BACKGROUND_MODES.AUTO")) {
+    throw new Error("La fotografía de Google debe activar explícitamente el fondo automático");
+  }
+});
+
+Deno.test("Itinerario es exclusivamente diario y la navegación conserva el orden acordado", async () => {
+  const source = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (source.includes("data-itinerary-view") || source.includes("itineraryView")) {
+    throw new Error("Itinerario no debe conservar selectores ni estado semanal/general");
+  }
+  const expectedNavigation = [
+    '["dashboard", "Dashboard"',
+    '["itinerary", "Itinerario"',
+    '["map", "Mapa"',
+    '["places", "Lugares"',
+    '["reservations", "Reservas"',
+    '["stays", "Hospedaje"',
+    '["transport", "Transporte"',
+    '["budget", "Presupuesto"',
+    '["purchases", "Compras"',
+    '["tasks", "TODO"',
+    '["notes", "Notas"',
+    '["inspiration", "Inspiración"',
+    '["settings", "Configuración"',
+  ];
+  let previous = -1;
+  for (const entry of expectedNavigation) {
+    const index = source.indexOf(entry);
+    if (index <= previous) throw new Error(`La navegación está desordenada cerca de ${entry}`);
+    previous = index;
+  }
+});

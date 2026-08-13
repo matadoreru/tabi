@@ -1160,6 +1160,31 @@ textarea {
   color: var(--muted);
   font-size: 12px;
 }
+.google-photo-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.google-photo-preview img {
+  width: 112px;
+  height: 70px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  object-fit: cover;
+}
+.google-photo-preview strong,
+.google-photo-preview small {
+  display: block;
+}
+.google-photo-preview small {
+  margin-top: 3px;
+  color: var(--muted);
+}
 
 .day-strip {
   display: flex;
@@ -1168,7 +1193,6 @@ textarea {
   max-width: 100%;
   padding: 2px 1px 10px;
   scrollbar-width: none;
-  scroll-snap-type: x proximity;
   overscroll-behavior-inline: contain;
   touch-action: pan-x;
 }
@@ -1177,12 +1201,10 @@ textarea {
 }
 .day-strip.dragging {
   cursor: grabbing;
-  scroll-snap-type: none;
   user-select: none;
 }
 .day-button {
   flex: 0 0 82px;
-  scroll-snap-align: start;
   border: 1px solid var(--line);
   color: var(--muted);
   background: var(--surface);
@@ -1310,13 +1332,8 @@ textarea {
     right: calc(50% - 58px);
   }
 }
-.itinerary-week-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
-  align-items: stretch;
-}
-.itinerary-week-grid > .card {
-  min-width: 0;
-  min-height: 260px;
+.itinerary-toolbar {
+  justify-content: flex-end;
 }
 .planner-layout {
   display: grid;

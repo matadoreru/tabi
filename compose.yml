@@ -38,7 +38,6 @@ services:
     container_name: tabi
     restart: unless-stopped
     environment:
-      DENO_DIR: /tmp/deno-dir
       PORT: "4173"
       TABI_POSTGRES_HOST: postgres
       TABI_POSTGRES_PORT: "5432"

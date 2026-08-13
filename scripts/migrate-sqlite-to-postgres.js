@@ -3,6 +3,16 @@ import { closeDatabase, db, transaction } from "../backend/database.js";
 import { ENTITY_TABLES } from "../backend/config.js";
 
 const sourcePath = Deno.args[0] || Deno.env.get("TABI_SQLITE_SOURCE") || "/app/data/tabi.sqlite";
+const JSON_COLUMNS = new Set(["data", "metadata"]);
+
+function migrationValue(table, column, value, row) {
+  if (!JSON_COLUMNS.has(column) || typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`JSON inválido en ${table}.${column} para ${row.id || row.trip_id || "un registro"}.`);
+  }
+}
 
 let source;
 try {
@@ -92,13 +102,26 @@ try {
       counts[table] = rows.length;
       const placeholders = columns.map(() => "?").join(",");
       const insert = db.prepare(`INSERT INTO ${table}(${columns.join(",")}) VALUES (${placeholders})`);
-      for (const row of rows) await insert.run(...columns.map((column) => row[column]));
+      for (const row of rows) {
+        await insert.run(...columns.map((column) => migrationValue(table, column, row[column], row)));
+      }
     }
 
     for (const [table] of tables) {
       const destination = Number((await db.prepare(`SELECT COUNT(*)::integer count FROM ${table}`).get()).count);
       if (destination !== counts[table]) {
         throw new Error(`Verificación fallida en ${table}: SQLite=${counts[table]}, PostgreSQL=${destination}.`);
+      }
+      const jsonColumn = columns.find((column) => JSON_COLUMNS.has(column));
+      if (jsonColumn) {
+        const invalidJson = Number(
+          (await db.prepare(
+            `SELECT COUNT(*)::integer count FROM ${table} WHERE jsonb_typeof(${jsonColumn}) <> 'object'`,
+          ).get()).count,
+        );
+        if (invalidJson > 0) {
+          throw new Error(`Verificación JSONB fallida en ${table}: ${invalidJson} registros no son objetos.`);
+        }
       }
     }
   });
