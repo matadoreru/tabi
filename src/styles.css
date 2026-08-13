@@ -893,6 +893,12 @@ textarea {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.todo-actions,
+.event-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .check {
   width: 22px;
   height: 22px;
@@ -1152,6 +1158,12 @@ textarea {
   margin: -3px 0 12px;
   font-size: 12px;
 }
+.place-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 .place-meta {
   display: flex;
   justify-content: space-between;
@@ -1373,6 +1385,9 @@ textarea {
 }
 .event-body small {
   color: var(--muted);
+}
+.event-actions {
+  flex: 0 0 auto;
 }
 .event-context {
   display: block;
@@ -1706,6 +1721,17 @@ textarea {
   text-transform: uppercase;
   letter-spacing: .5px;
 }
+.map-saved-search {
+  width: 100%;
+  margin-bottom: 10px;
+}
+.map-saved-empty {
+  margin: 14px 2px;
+}
+.map-place-list [hidden],
+.map-saved-empty[hidden] {
+  display: none;
+}
 .map-place-preview,
 .map-selected {
   display: grid;
@@ -1810,17 +1836,24 @@ textarea {
 }
 .modal {
   width: min(680px, 100%);
-  max-height: min(820px, calc(100vh - 30px));
-  overflow-y: auto;
+  max-height: min(820px, calc(100dvh - 30px));
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 25px;
   box-shadow: 0 30px 80px rgba(0,0,0,.25);
   animation: rise .2s ease;
+  display: flex;
+  flex-direction: column;
+}
+.modal > form {
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
 }
 .modal-head {
-  position: sticky;
-  top: 0;
+  flex: 0 0 auto;
   z-index: 2;
   background: var(--surface);
   padding: 21px 24px 14px;
@@ -1834,11 +1867,15 @@ textarea {
   font-size: 20px;
 }
 .modal-body {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 22px 24px;
 }
 .modal-foot {
-  position: sticky;
-  bottom: 0;
+  flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
   gap: 9px;
@@ -1854,6 +1891,7 @@ textarea {
 .field {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 .field[hidden] {
   display: none;
@@ -2998,5 +3036,315 @@ textarea {
   }
   .modal-foot .btn {
     min-height: 44px;
+  }
+}
+
+/* Responsive safety net for every app section and editor. */
+@media (max-width: 800px) {
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+    overflow-x: clip;
+  }
+  .app-shell,
+  .main,
+  .content,
+  .content > *,
+  .card,
+  .section-stack,
+  .toolbar,
+  .item-list,
+  .list-item,
+  .list-item-main {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .topbar {
+    gap: 8px;
+    padding-inline: 12px;
+  }
+  .page-heading {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+  .page-heading h1 {
+    overflow: hidden;
+    font-size: clamp(20px, 6vw, 25px);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .top-actions {
+    min-width: 0;
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+  .top-actions .btn {
+    min-height: 40px;
+  }
+  .mobile-nav {
+    width: 100%;
+    max-width: 100vw;
+  }
+  .section-title,
+  .card-head {
+    min-width: 0;
+  }
+  .section-title > div,
+  .card-head > div {
+    min-width: 0;
+  }
+  .planner-event {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+  .event-card,
+  .event-body,
+  .event-actions {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .event-body strong,
+  .event-body small,
+  .event-context,
+  .list-item-main strong,
+  .list-item-main small,
+  .cell-main,
+  .cell-sub {
+    overflow-wrap: anywhere;
+  }
+  .map-sidebar {
+    width: min(calc(100vw - 24px), 360px);
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 700px) {
+  .data-table {
+    min-width: 0;
+    table-layout: fixed;
+  }
+  .data-table tr,
+  .data-table td,
+  .data-table td > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .data-table tr {
+    overflow: hidden;
+  }
+  .data-table td {
+    grid-template-columns: minmax(78px, 32%) minmax(0, 1fr);
+  }
+  .data-table .cell-main,
+  .data-table .cell-sub {
+    white-space: normal;
+  }
+  .purchase-product {
+    min-width: 0;
+  }
+  .table-wrap {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .content {
+    padding-inline: 14px;
+  }
+  .top-actions [data-new-invite] {
+    width: 40px;
+    padding: 0;
+  }
+  .top-actions [data-new-invite] span {
+    display: none;
+  }
+  .section-title {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .section-title .btn {
+    max-width: 100%;
+  }
+  .itinerary-toolbar {
+    justify-content: center;
+  }
+  .itinerary-toolbar > .section-add {
+    flex: 1 0 100%;
+  }
+  .itinerary-toolbar > .btn-secondary {
+    min-width: 0;
+    flex: 1 1 145px;
+    padding-inline: 11px;
+  }
+  .planner {
+    padding: 6px 11px 14px;
+  }
+  .planner-event {
+    grid-template-columns: 46px minmax(0, 1fr);
+    gap: 8px;
+  }
+  .planner-event::before {
+    left: 52px;
+  }
+  .planner-time {
+    font-size: 10px;
+  }
+  .event-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 11px;
+  }
+  .event-card:not([draggable]) .drag-handle {
+    display: none;
+  }
+  .event-body {
+    flex: 1 1 calc(100% - 24px);
+  }
+  .event-card:not([draggable]) .event-body {
+    flex-basis: 100%;
+  }
+  .event-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    padding-left: 22px;
+  }
+  .event-card:not([draggable]) .event-actions {
+    padding-left: 0;
+  }
+  .event-actions .badge {
+    max-width: 100%;
+  }
+  .todo-list .list-item {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px 10px;
+  }
+  .todo-list .check {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .todo-list .list-item-main {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .todo-actions {
+    grid-column: 2;
+    grid-row: 2;
+    justify-content: space-between;
+  }
+  .item-list > .list-item {
+    flex-wrap: wrap;
+  }
+  .map-place-list > .list-item {
+    flex-wrap: nowrap;
+  }
+  .list-item-main strong {
+    white-space: normal;
+  }
+  .trip-card-main {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: 17px;
+  }
+  .trip-card-main > *,
+  .place-meta > span,
+  .stay-summary > *,
+  .stay-details > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .stat-card .money-pair,
+  .budget-hero .money-pair {
+    white-space: normal;
+  }
+  .modal-backdrop {
+    width: 100vw;
+    height: 100dvh;
+    overflow: hidden;
+    padding: max(12px, env(safe-area-inset-top)) 0 0;
+  }
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - max(12px, env(safe-area-inset-top)));
+  }
+  .modal > form {
+    overflow: hidden;
+  }
+  .modal-head {
+    padding: 16px 16px 12px;
+  }
+  .modal-head h2 {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .modal-body {
+    padding: 16px;
+  }
+  .modal-foot {
+    position: static;
+    flex-wrap: wrap;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .modal-foot .btn {
+    min-width: 0;
+    flex: 1 1 120px;
+  }
+  .form-grid,
+  .field,
+  .field input,
+  .field select,
+  .field textarea,
+  .checkbox-group,
+  .autocomplete,
+  .image-picker {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .quick-place-head,
+  .quick-place-actions,
+  .image-picker-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .quick-place-actions .btn,
+  .image-picker-actions .btn {
+    width: 100%;
+  }
+  .data-table tr {
+    margin-inline: 0;
+  }
+}
+
+@media (max-width: 360px) {
+  .content {
+    padding-inline: 10px;
+  }
+  .topbar {
+    padding-inline: 8px;
+  }
+  .top-actions {
+    gap: 4px;
+  }
+  .top-actions .btn,
+  .top-actions [data-new-invite] {
+    width: 38px;
+    min-height: 38px;
+    padding: 0;
+  }
+  .card-pad {
+    padding: 14px;
+  }
+  .stats-mobile {
+    grid-template-columns: 1fr;
+  }
+  .data-table td {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 }

@@ -70,6 +70,7 @@ const ui = {
   itineraryScrollLeft: null,
   mapPlaceId: "",
   mapSidebarOpen: false,
+  mapSavedQuery: "",
   filter: "Todos",
   authMode: "login",
   inspirationStatus: "Todos",
@@ -891,7 +892,7 @@ function layout(content) {
     members.slice(0, 3).map((member) => avatar(member.user)).join("")
   }${members.length > 3 ? `<span class="avatar more">+${members.length - 3}</span>` : ""}</button>${
     session.can(PERMISSIONS.MEMBER_INVITE)
-      ? `<button class="btn btn-secondary" data-new-invite>${icon("users")} Compartir</button>`
+      ? `<button class="btn btn-secondary" data-new-invite>${icon("users")} <span>Compartir</span></button>`
       : ""
   }<button class="btn btn-secondary desktop-only" data-trip-list>Mis viajes</button><button class="btn btn-secondary icon-btn" data-theme-toggle aria-label="Cambiar tema">${
     icon(document.documentElement.dataset.theme === "dark" ? "sun" : "moon")
@@ -2168,7 +2169,7 @@ function renderItinerary() {
           esc(item.title)
         }</strong><small>${esc(display.primary)} · ${durationLabel(timeDiff(item.start, item.end))}</small>${
           display.secondary ? `<span class="event-context">${esc(display.secondary)}</span>` : ""
-        }</div>${activityMapsButton(item)}${
+        }</div><div class="event-actions">${activityMapsButton(item)}${
           !item.virtual && session.can(PERMISSIONS.TRIP_EDIT)
             ? `<button class="btn btn-ghost icon-btn" type="button" data-clone-activity="${item.id}" aria-label="Duplicar actividad" title="Duplicar actividad">${
               icon("file")
@@ -2176,7 +2177,7 @@ function renderItinerary() {
             : ""
         }${
           item.virtual ? badge("Sincronizado", "blue") : badge(item.status === "done" ? "Realizado" : display.kind)
-        }</div></div>`;
+        }</div></div></div>`;
       }).join("")
       : emptyState(
         "Este día está por escribir",
@@ -2336,9 +2337,7 @@ function renderPlaces() {
         hasImage
           ? `<img class="place-cover-photo" src="${esc(background.value)}" alt="Fondo de ${esc(place.name)}">`
           : ""
-      }<span>${badge(place.status)}</span><span class="place-symbol">${esc(coverSymbol)}</span><span>${
-        badge(place.priority, place.priority === "Alta" || place.priority === "Imprescindible" ? "red" : "")
-      }</span>${
+      }<span class="place-symbol">${esc(coverSymbol)}</span>${
         hasImage && background.automatic
           ? `<a class="place-photo-credit" href="${
             esc(place.photoAttributionUrl || place.link || "#")
@@ -2346,7 +2345,9 @@ function renderPlaces() {
           : ""
       }</div><div class="place-body"><h3>${esc(place.name)}</h3><p>${
         esc(place.description || "Sin descripción")
-      }</p><div class="place-admission">${badge(place.admission || "Entrada no indicada", "blue")}${
+      }</p><div class="place-admission"><div class="place-badges">${badge(place.status)}${
+        badge(place.admission || "Entrada no indicada", "blue")
+      }${badge(place.priority, place.priority === "Alta" || place.priority === "Imprescindible" ? "red" : "")}</div>${
         Number(place.ticketPrice || 0) ? itemMoney(place.ticketPrice, place) : ""
       }</div><div class="place-meta"><span>${icon("pin")} ${esc(place.city)} · ${
         esc(place.area)
@@ -3169,6 +3170,21 @@ function renderMap() {
   const selected = places.find((p) => p.id === ui.mapPlaceId) || null;
   if (!selected) ui.mapPlaceId = "";
   const orderedPlaces = selected ? [selected, ...places.filter((place) => place.id !== selected.id)] : places;
+  const savedQuery = searchKey(ui.mapSavedQuery);
+  const matchesSavedQuery = (place) =>
+    !savedQuery || searchKey(
+      [
+        place.name,
+        place.city,
+        place.area,
+        place.category,
+        place.status,
+        place.address,
+        place.description,
+        place.notes,
+      ].filter(Boolean).join(" "),
+    ).includes(savedQuery);
+  const visiblePlaces = orderedPlaces.filter(matchesSavedQuery);
   return `<section class="card map-layout"><aside class="map-sidebar ${
     ui.mapSidebarOpen ? "open" : ""
   }"><div class="map-sidebar-head"><strong>Explorar lugares</strong><button class="btn btn-ghost icon-btn" type="button" data-map-panel-close aria-label="Cerrar lista">${
@@ -3177,17 +3193,33 @@ function renderMap() {
     selected ? "" : "hidden"
   }>${
     mapSelectedDetails(selected)
-  }</div><div class="map-saved-head"><strong>Sitios guardados</strong><span>${places.length}</span></div><div class="item-list map-place-list">${
+  }</div><div class="map-saved-head"><strong>Sitios guardados</strong><span data-map-saved-count>${
+    savedQuery ? `${visiblePlaces.length} de ${places.length}` : places.length
+  }</span></div><div class="search map-saved-search">${
+    icon("search")
+  }<input type="search" data-map-saved-search value="${
+    esc(ui.mapSavedQuery)
+  }" placeholder="Buscar en sitios guardados…" aria-label="Buscar en sitios guardados" autocomplete="off"></div><div class="item-list map-place-list">${
     orderedPlaces.map((p) =>
       `<button class="list-item ${
         p.id === selected?.id ? "active" : ""
-      }" style="cursor:pointer;text-align:left;color:inherit" data-map-place="${p.id}"><span class="map-list-icon">${
-        esc(savedPlaceIcon(p))
-      }</span><span class="list-item-main"><strong>${esc(p.name)}</strong><small>${esc(p.city)} · ${
-        esc(p.area)
-      }</small></span>${icon("chevron")}</button>`
-    ).join("") || `<p class="cell-sub">Busca un sitio arriba para añadirlo al viaje.</p>`
-  }</div>${
+      }" style="cursor:pointer;text-align:left;color:inherit" data-map-place="${p.id}" data-map-saved-item ${
+        matchesSavedQuery(p) ? "" : "hidden"
+      } data-map-saved-key="${
+        esc(
+          searchKey(
+            [p.name, p.city, p.area, p.category, p.status, p.address, p.description, p.notes].filter(Boolean).join(" "),
+          ),
+        )
+      }"><span class="map-list-icon">${esc(savedPlaceIcon(p))}</span><span class="list-item-main"><strong>${
+        esc(p.name)
+      }</strong><small>${esc(p.city)} · ${esc(p.area)}</small></span>${icon("chevron")}</button>`
+    ).join("")
+  }<p class="cell-sub map-saved-empty" data-map-saved-empty ${visiblePlaces.length ? "hidden" : ""}>${
+    places.length
+      ? "No hay sitios guardados que coincidan con la búsqueda."
+      : "Busca un sitio arriba para añadirlo al viaje."
+  }</p></div>${
     activeShares.length
       ? `<div class="map-saved-head"><strong>Ubicaciones temporales</strong><span>${activeShares.length}</span></div><div class="item-list">${
         activeShares.map((share) =>
@@ -3522,9 +3554,9 @@ function taskRow(task) {
     esc(task.category || "Sin categoría")
   } · ${esc(memberName(task.assigneeId))}${
     task.dueDate ? ` · ${overdue ? "Venció" : "Límite"} ${formatDate(task.dueDate)}` : ""
-  }</small></div>${
+  }</small></div><div class="todo-actions">${
     badge(task.priority, task.priority === "Alta" ? "red" : "")
-  }<button class="btn btn-ghost icon-btn" data-edit="tasks:${task.id}">${icon("edit")}</button></div>`;
+  }<button class="btn btn-ghost icon-btn" data-edit="tasks:${task.id}">${icon("edit")}</button></div></div>`;
 }
 function renderTasks() {
   const enriched = store.collection("tasks").map((task) => ({
@@ -4954,25 +4986,37 @@ function bindRoute() {
     let startX = 0;
     let startScroll = 0;
     dayStrip.addEventListener("pointerdown", (event) => {
-      if (event.pointerType === "touch") return;
+      if (event.pointerType === "touch" || event.button !== 0) return;
       dragging = true;
       dragged = false;
       startX = event.clientX;
       startScroll = dayStrip.scrollLeft;
-      dayStrip.classList.add("dragging");
-      dayStrip.setPointerCapture(event.pointerId);
     });
     dayStrip.addEventListener("pointermove", (event) => {
       if (!dragging) return;
-      if (Math.abs(event.clientX - startX) > 5) dragged = true;
+      if (!(event.buttons & 1)) {
+        dragging = false;
+        return;
+      }
+      if (!dragged && Math.abs(event.clientX - startX) <= 5) return;
+      if (!dragged) {
+        dragged = true;
+        dayStrip.classList.add("dragging");
+        dayStrip.setPointerCapture(event.pointerId);
+      }
+      event.preventDefault();
       dayStrip.scrollLeft = startScroll - (event.clientX - startX);
     });
-    const stopDragging = () => {
+    const stopDragging = (event) => {
       dragging = false;
       dayStrip.classList.remove("dragging");
+      if (dayStrip.hasPointerCapture(event.pointerId)) dayStrip.releasePointerCapture(event.pointerId);
     };
     dayStrip.addEventListener("pointerup", stopDragging);
-    dayStrip.addEventListener("pointercancel", stopDragging);
+    dayStrip.addEventListener("pointercancel", (event) => {
+      stopDragging(event);
+      dragged = false;
+    });
     dayStrip.addEventListener("click", (event) => {
       if (!dragged) return;
       event.preventDefault();
@@ -5024,6 +5068,22 @@ function bindRoute() {
       render();
     })
   );
+  const mapSavedSearch = app.querySelector("[data-map-saved-search]");
+  mapSavedSearch?.addEventListener("input", () => {
+    ui.mapSavedQuery = mapSavedSearch.value;
+    const query = searchKey(ui.mapSavedQuery);
+    let visible = 0;
+    const items = [...app.querySelectorAll("[data-map-saved-item]")];
+    items.forEach((item) => {
+      const matches = !query || item.dataset.mapSavedKey.includes(query);
+      item.hidden = !matches;
+      if (matches) visible++;
+    });
+    const count = app.querySelector("[data-map-saved-count]");
+    if (count) count.textContent = query ? `${visible} de ${items.length}` : String(items.length);
+    const empty = app.querySelector("[data-map-saved-empty]");
+    if (empty) empty.hidden = visible > 0;
+  });
   app.querySelector("[data-map-panel-toggle]")?.addEventListener("click", () => setMapSidebarOpen(true));
   app.querySelectorAll("[data-map-panel-close]").forEach((button) =>
     button.addEventListener("click", () => setMapSidebarOpen(false))

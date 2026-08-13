@@ -84,6 +84,9 @@ Deno.test("el mapa muestra el detalle antes de la lista y permite limpiar la sel
   if (!source.includes('map.addListener("click", (event) =>') || !source.includes("clearSelectedPlace();")) {
     throw new Error("El mapa debe limpiar la selección al pulsar fuera de un marcador");
   }
+  if (!mapView.includes("data-map-saved-search") || !source.includes("data-map-saved-key")) {
+    throw new Error("El mapa debe permitir buscar exclusivamente entre los sitios guardados");
+  }
 });
 
 Deno.test("la interfaz integra notas, fotos y un asa de arrastre inequívoca", async () => {
@@ -164,6 +167,11 @@ Deno.test("Itinerario es exclusivamente diario y la navegación conserva el orde
   if (source.includes("data-itinerary-view") || source.includes("itineraryView")) {
     throw new Error("Itinerario no debe conservar selectores ni estado semanal/general");
   }
+  const pointerMove = source.indexOf('dayStrip.addEventListener("pointermove"');
+  const pointerCapture = source.indexOf("dayStrip.setPointerCapture");
+  if (pointerMove < 0 || pointerCapture < pointerMove) {
+    throw new Error("Los días deben seguir recibiendo clics antes de iniciar un arrastre horizontal");
+  }
   const expectedNavigation = [
     '["dashboard", "Dashboard"',
     '["itinerary", "Itinerario"',
@@ -214,6 +222,12 @@ Deno.test("Fase 2 integra zonas, calendario, trayectos, colaboración y tablas m
   }
   if (!css.includes("content: attr(data-label)") || !css.includes(".skip-link")) {
     throw new Error("Las tablas móviles o el salto accesible no están integrados");
+  }
+  if (
+    !css.includes("table-layout: fixed") || !css.includes("max-height: calc(100dvh") ||
+    !app.includes('class="event-actions"') || !app.includes('class="todo-actions"')
+  ) {
+    throw new Error("Las tablas, editores y tarjetas deben ajustarse al ancho móvil sin desbordar");
   }
   if (!api.includes('resource === "comments"') || !api.includes('resource === "route-estimates"')) {
     throw new Error("Faltan endpoints desacoplados de colaboración o rutas");
