@@ -369,6 +369,87 @@ const migrations = [
 
   UPDATE trips SET data=data || jsonb_build_object('timeZone','UTC') WHERE NOT (data ? 'timeZone');
   `,
+  `
+  CREATE TABLE IF NOT EXISTS trip_participants(
+    id TEXT PRIMARY KEY,
+    trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    name TEXT NOT NULL CHECK(char_length(name) BETWEEN 1 AND 80),
+    kind TEXT NOT NULL DEFAULT 'guest' CHECK(kind IN ('member','guest')),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_trip_participants_user
+    ON trip_participants(trip_id,user_id) WHERE user_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_trip_participants_trip ON trip_participants(trip_id,active,name);
+
+  INSERT INTO trip_participants(id,trip_id,user_id,name,kind,active,created_at,updated_at,created_by)
+  SELECT 'par_' || md5(tm.trip_id || tm.user_id),tm.trip_id,tm.user_id,u.name,'member',TRUE,
+    tm.joined_at,tm.joined_at,tm.invited_by
+  FROM trip_members tm JOIN users u ON u.id=tm.user_id
+  ON CONFLICT DO NOTHING;
+
+  ALTER TABLE financial_transactions ADD COLUMN IF NOT EXISTS payer_participant_id TEXT
+    REFERENCES trip_participants(id) ON DELETE SET NULL;
+  ALTER TABLE expense_splits ADD COLUMN IF NOT EXISTS participant_id TEXT
+    REFERENCES trip_participants(id) ON DELETE CASCADE;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_splits_participant_unique
+    ON expense_splits(trip_id,source_collection,source_id,participant_id)
+    WHERE participant_id IS NOT NULL;
+
+  UPDATE financial_transactions f SET payer_participant_id=p.id
+  FROM trip_participants p
+  WHERE f.trip_id=p.trip_id AND f.payer_id=p.user_id AND f.payer_participant_id IS NULL;
+  UPDATE expense_splits s SET participant_id=p.id
+  FROM trip_participants p
+  WHERE s.trip_id=p.trip_id AND s.member_user_id=p.user_id AND s.participant_id IS NULL;
+
+  CREATE TABLE IF NOT EXISTS settlement_payments(
+    id TEXT PRIMARY KEY,
+    trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    from_participant_id TEXT NOT NULL REFERENCES trip_participants(id),
+    to_participant_id TEXT NOT NULL REFERENCES trip_participants(id),
+    amount_minor NUMERIC(30,0) NOT NULL CHECK(amount_minor > 0),
+    currency TEXT NOT NULL CHECK(char_length(currency)=3),
+    paid_on DATE NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'confirmed' CHECK(status IN ('confirmed','voided')),
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    CHECK(from_participant_id<>to_participant_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_settlement_payments_trip
+    ON settlement_payments(trip_id,paid_on,created_at);
+
+  CREATE TABLE IF NOT EXISTS notification_reads(
+    trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    notification_key TEXT NOT NULL,
+    read_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY(trip_id,user_id,notification_key)
+  );
+
+  ${
+    ["proposals", "availabilities", "journal_entries", "emergency_contacts", "location_shares"].map((table) => `
+    CREATE TABLE IF NOT EXISTS ${table}(
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      version INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_by TEXT REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_${table}_trip ON ${table}(trip_id,updated_at DESC);
+  `).join("\n")
+  }
+  `,
 ];
 
 async function migrate() {

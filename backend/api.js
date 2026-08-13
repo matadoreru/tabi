@@ -14,15 +14,36 @@ import { PERMISSIONS, permissionsForRole } from "../src/permissions.js";
 import { findPlaceDuplicate, inspirationLink } from "../src/domain.js";
 import { alternateCurrency, isSupportedCurrency } from "../src/currency.js";
 import { ENTITY_CONTRACTS, entityContractIssues, MONEY_FIELDS } from "../src/contracts.js";
-import { attachExactMoney, createMoney } from "../src/money.js";
+import { attachExactMoney, createMoney, monetaryField } from "../src/money.js";
 import { attachTemporalInstants, isValidTimeZone } from "../src/time.js";
 import { commentRoutes, routeEstimateRoutes } from "./collaboration.js";
 import { prometheusMetrics, uptimeSeconds } from "./metrics.js";
 import { addIsoDays, duplicateOptions, resetEntityProgress, shiftEntityDates } from "../src/templates.js";
+import { weatherRoute } from "./weather.js";
+import {
+  ensureMemberParticipant,
+  listNotifications,
+  listParticipants,
+  listSettlementPayments,
+  notificationRoutes,
+  participantRoutes,
+  proposalVoteRoute,
+  settlementRoutes,
+} from "./group-travel.js";
 
 const editPermission = (collection) =>
   collection === "expenses" || collection === "funds" ? PERMISSIONS.BUDGET_EDIT : PERMISSIONS.TRIP_EDIT;
 const userSelect = "u.id,u.name,u.username,u.email,u.avatar_url,u.created_at";
+const PORTABLE_COLLECTIONS = new Set(Object.keys(ENTITY_TABLES).filter((name) => name !== "locationShares"));
+const OPTIONAL_ARCHIVE_COLLECTIONS = new Set([
+  "notes",
+  "reminders",
+  "proposals",
+  "availabilities",
+  "journalEntries",
+  "emergencyContacts",
+  "locationShares",
+]);
 
 export async function api(request, pathname) {
   validateMutationOrigin(request);
@@ -81,6 +102,7 @@ export async function api(request, pathname) {
     }
     throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
   }
+  if (parts[0] === "weather") return weatherRoute(request);
   if (parts[0] !== "trips") throw new HttpError(404, "NOT_FOUND", "Ruta no encontrada.");
   if (parts.length === 1) return tripCollectionRoutes(request, user);
 
@@ -99,6 +121,13 @@ export async function api(request, pathname) {
     return json(await financialState(tripId));
   }
   if (resource === "comments") return commentRoutes(request, user, tripId, parts[3]);
+  if (resource === "participants") return participantRoutes(request, user, tripId, parts[3]);
+  if (resource === "settlements") return settlementRoutes(request, user, tripId, parts[3]);
+  if (resource === "notifications") return notificationRoutes(request, user, tripId);
+  if (resource === "proposals" && parts[4] === "vote") {
+    return proposalVoteRoute(request, user, tripId, parts[3]);
+  }
+  if (resource === "history") return historyRoutes(request, user, tripId, parts[3]);
   if (resource === "route-estimates") return routeEstimateRoutes(request, user, tripId);
   if (resource === "members") return memberRoutes(request, user, tripId, parts.slice(3));
   if (resource === "invitations") return invitationRoutes(request, user, tripId, parts.slice(3));
@@ -153,6 +182,7 @@ async function tripCollectionRoutes(request, user) {
         user.id,
         timestamp,
       );
+      await ensureMemberParticipant(id, user.id, user.name, user.id);
       await audit(id, user.id, "trip.created", "trip", id, { name: input.name });
     });
     return json({
@@ -214,6 +244,13 @@ async function bootstrap(request, user, tripId) {
   if (request.method !== "GET") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
   const member = await authorize(user.id, tripId, PERMISSIONS.TRIP_VIEW);
   const trip = readTrip(await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId));
+  const locationRows = await db.prepare("SELECT id,data FROM location_shares WHERE trip_id=?").all(tripId);
+  for (const row of locationRows) {
+    const expiration = Date.parse(jsonObject(row.data).expiresAt || "");
+    if (!Number.isFinite(expiration) || expiration <= Date.now()) {
+      await db.prepare("DELETE FROM location_shares WHERE id=? AND trip_id=?").run(row.id, tripId);
+    }
+  }
   await ensureFinancialProjection(tripId, trip.currency);
   const collections = Object.fromEntries(
     await Promise.all(
@@ -223,7 +260,7 @@ async function bootstrap(request, user, tripId) {
         name,
         (await db.prepare(`SELECT * FROM ${entityTable(name)} WHERE trip_id=? ORDER BY created_at`).all(tripId)).map(
           readEntity,
-        ),
+        ).filter((item) => name !== "locationShares" || Date.parse(item.expiresAt) > Date.now()),
       ]),
     ),
   );
@@ -233,6 +270,9 @@ async function bootstrap(request, user, tripId) {
     ? await listInvitations(tripId)
     : [];
   const finance = await financialState(tripId);
+  const participants = await listParticipants(tripId);
+  const settlementPayments = await listSettlementPayments(tripId);
+  const notifications = await listNotifications(tripId, user.id);
   return json({
     trip,
     membership: readMembership(member),
@@ -240,6 +280,9 @@ async function bootstrap(request, user, tripId) {
     members,
     logs,
     invitations,
+    participants,
+    settlementPayments,
+    notifications,
     ...finance,
     ...collections,
   });
@@ -260,7 +303,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     data = attachTemporalInstants(collection, data, await tripTimeZone(tripId));
     await attachEntityMoney(tripId, collection, data);
     validateEntity(collection, data);
-    await assertFinancialMembers(tripId, data);
+    await assertFinancialMembers(tripId, data, collection);
     await attachExchangeSnapshot(tripId, data, input);
     if (collection === "activities") await assertActivityReference(tripId, data);
     if (collection === "reservations") await assertReservationReference(tripId, data);
@@ -290,7 +333,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     data = attachTemporalInstants(collection, data, await tripTimeZone(tripId));
     await attachEntityMoney(tripId, collection, data);
     validateEntity(collection, data);
-    await assertFinancialMembers(tripId, data);
+    await assertFinancialMembers(tripId, data, collection);
     await attachExchangeSnapshot(tripId, data, input);
     if (collection === "activities") await assertActivityReference(tripId, data);
     if (collection === "reservations") await assertReservationReference(tripId, data);
@@ -307,6 +350,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
       await audit(tripId, user.id, "entity.updated", collection, id, {
         title: entityTitle(collection, data),
         changes: diff(before, data),
+        previous: cleanEntity(before),
       });
     });
     const item = readEntity(await db.prepare(`SELECT * FROM ${table} WHERE id=? AND trip_id=?`).get(id, tripId));
@@ -331,12 +375,60 @@ async function entityRoutes(request, user, tripId, collection, id) {
       if (!result.changes) conflict(current.version + 1);
       await audit(tripId, user.id, "entity.deleted", collection, id, {
         title: entityTitle(collection, readEntity(current)),
+        previous: cleanEntity(readEntity(current)),
       });
     });
     emit(tripId, user, "entity.deleted", collection, id, null);
     return json({ ok: true, ...await financialState(tripId) });
   }
   throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
+}
+
+async function historyRoutes(request, user, tripId, logId) {
+  if (request.method !== "POST" || !logId) throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
+  await authorize(user.id, tripId, PERMISSIONS.TRIP_EDIT);
+  const log = await db.prepare("SELECT * FROM trip_activity_logs WHERE id=? AND trip_id=?").get(logId, tripId);
+  const metadata = jsonObject(log?.metadata);
+  if (!log || !ENTITY_TABLES[log.entity_type] || !metadata.previous) {
+    throw new HttpError(422, "HISTORY_NOT_RESTORABLE", "Esta entrada no contiene una versión restaurable.");
+  }
+  const table = entityTable(log.entity_type);
+  const current = await db.prepare(`SELECT * FROM ${table} WHERE id=? AND trip_id=?`).get(log.entity_id, tripId);
+  const timestamp = now();
+  const data = cleanEntity(metadata.previous);
+  await transaction(async () => {
+    if (current) {
+      await db.prepare(
+        `UPDATE ${table} SET data=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND trip_id=?`,
+      ).run(
+        data,
+        timestamp,
+        user.id,
+        log.entity_id,
+        tripId,
+      );
+    } else {
+      await db.prepare(
+        `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,1,?,?,?,?)`,
+      ).run(log.entity_id, tripId, data, timestamp, timestamp, user.id, user.id);
+    }
+    await syncFinancialSource(
+      tripId,
+      log.entity_type,
+      { ...data, id: log.entity_id },
+      await tripCurrency(tripId),
+      timestamp,
+    );
+    await audit(tripId, user.id, "entity.restored", log.entity_type, log.entity_id, {
+      title: entityTitle(log.entity_type, data),
+      sourceLogId: logId,
+    });
+  });
+  const item = readEntity(
+    await db.prepare(`SELECT * FROM ${table} WHERE id=? AND trip_id=?`).get(log.entity_id, tripId),
+  );
+  emit(tripId, user, "entity.restored", log.entity_type, log.entity_id, item);
+  return json({ item, ...await financialState(tripId) });
 }
 
 async function memberRoutes(request, user, tripId, parts) {
@@ -452,6 +544,7 @@ async function invitePublicRoutes(request, parts) {
           now(),
           row.created_by,
         );
+        await ensureMemberParticipant(tripId, user.id, user.name, row.created_by);
       }
       const result = await db.prepare(
         "UPDATE trip_invitations SET uses=uses+1,version=version+1 WHERE id=? AND version=? AND revoked_at IS NULL AND uses<max_uses AND expires_at>?",
@@ -499,6 +592,7 @@ async function duplicateTrip(request, user, tripId) {
   await authorize(user.id, tripId, PERMISSIONS.TRIP_DUPLICATE);
   const input = await body(request);
   const source = await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId);
+  const sourceParticipants = await listParticipants(tripId);
   const options = duplicateOptions(input, dateOnly(source.start_date));
   if (!options.collections.size) {
     throw new HttpError(422, "EMPTY_DUPLICATE", "Selecciona al menos una sección para duplicar.");
@@ -557,6 +651,21 @@ async function duplicateTrip(request, user, tripId) {
       user.id,
       timestamp,
     );
+    const participantIdMap = new Map();
+    const newOwnerParticipantId = await ensureMemberParticipant(newTripId, user.id, user.name, user.id);
+    const sourceOwnerParticipant = sourceParticipants.find((participant) => participant.userId === user.id);
+    if (sourceOwnerParticipant) participantIdMap.set(sourceOwnerParticipant.id, newOwnerParticipantId);
+    for (
+      const sourceParticipant of sourceParticipants.filter((participant) =>
+        participant.id !== sourceOwnerParticipant?.id
+      )
+    ) {
+      const participantId = newId("par");
+      await db.prepare(
+        "INSERT INTO trip_participants(id,trip_id,name,kind,active,version,created_at,updated_at,created_by) VALUES (?,?,?,'guest',TRUE,1,?,?,?)",
+      ).run(participantId, newTripId, sourceParticipant.name, timestamp, timestamp, user.id);
+      participantIdMap.set(sourceParticipant.id, participantId);
+    }
     for (const [collection, table] of Object.entries(ENTITY_TABLES)) {
       for (const row of sourceRows[collection]) {
         const entityId = idMaps[collection].get(row.id);
@@ -580,7 +689,21 @@ async function duplicateTrip(request, user, tripId) {
         data = attachTemporalInstants(collection, data, sourceExtra.timeZone || "UTC");
         attachExactMoney(data, ENTITY_CONTRACTS[collection]?.money || [], source.currency);
         if (data.paidByUserId && data.paidByUserId !== user.id) delete data.paidByUserId;
-        if (Array.isArray(data.splits)) data.splits = data.splits.filter((split) => split.memberUserId === user.id);
+        if (data.paidByParticipantId) {
+          data.paidByParticipantId = participantIdMap.get(data.paidByParticipantId) || "";
+        }
+        if (Array.isArray(data.splits)) {
+          data.splits = data.splits.map((split) => ({
+            ...split,
+            participantId: participantIdMap.get(split.participantId) ||
+              (split.memberUserId === user.id ? newOwnerParticipantId : ""),
+            memberUserId: split.memberUserId === user.id ? user.id : null,
+          })).filter((split) => split.participantId);
+        }
+        if (Array.isArray(data.participantIds)) {
+          data.participantIds = data.participantIds.map((id) => participantIdMap.get(id)).filter(Boolean);
+        }
+        if (data.participantId) data.participantId = participantIdMap.get(data.participantId) || "";
         for (const field of ["photo", "backgroundImage"]) {
           const asset = await db.prepare(
             "SELECT * FROM media_assets WHERE trip_id=? AND owner_collection=? AND owner_id=? AND field_name=?",
@@ -736,14 +859,17 @@ async function tripArchiveRoutes(request, user, tripId) {
     const trip = await db.prepare("SELECT * FROM trips WHERE id=?").get(tripId);
     const collections = Object.fromEntries(
       await Promise.all(
-        Object.entries(ENTITY_TABLES).map(async ([collection, table]) => {
-          const entities = (await db.prepare(`SELECT * FROM ${table} WHERE trip_id=? ORDER BY created_at`).all(tripId))
-            .map(readEntity);
-          return [
-            collection,
-            await Promise.all(entities.map((entity) => portableEntityWithMedia(tripId, collection, entity))),
-          ];
-        }),
+        Object.entries(ENTITY_TABLES).filter(([collection]) => PORTABLE_COLLECTIONS.has(collection)).map(
+          async ([collection, table]) => {
+            const entities =
+              (await db.prepare(`SELECT * FROM ${table} WHERE trip_id=? ORDER BY created_at`).all(tripId))
+                .map(readEntity);
+            return [
+              collection,
+              await Promise.all(entities.map((entity) => portableEntityWithMedia(tripId, collection, entity))),
+            ];
+          },
+        ),
       ),
     );
     return json({
@@ -805,7 +931,8 @@ async function importTripArchive(archive, user, tripId) {
   const prepared = {};
   const idMaps = {};
   for (const [collection, table] of Object.entries(ENTITY_TABLES)) {
-    const sources = ["notes", "reminders"].includes(collection) && archive.collections[collection] === undefined
+    const sources = !PORTABLE_COLLECTIONS.has(collection) ||
+        (OPTIONAL_ARCHIVE_COLLECTIONS.has(collection) && archive.collections[collection] === undefined)
       ? []
       : archive.collections[collection];
     if (!Array.isArray(sources)) {
@@ -835,7 +962,7 @@ async function importTripArchive(archive, user, tripId) {
       data = attachTemporalInstants(collection, data, trip.timeZone || trip.extra?.timeZone || "UTC");
       attachExactMoney(data, ENTITY_CONTRACTS[collection]?.money || [], trip.currency);
       validateEntity(collection, data);
-      await assertFinancialMembers(tripId, data);
+      await assertFinancialMembers(tripId, data, collection);
       prepared[collection].push({ id: targetId, data });
     }
   }
@@ -961,6 +1088,7 @@ async function importTripData(request, user, tripId) {
   let count = 0;
   await transaction(async () => {
     for (const [collection, table] of Object.entries(ENTITY_TABLES)) {
+      if (!PORTABLE_COLLECTIONS.has(collection)) continue;
       for (const source of input[collection] || []) {
         let data = cleanEntity(source);
         delete data.id;
@@ -968,7 +1096,7 @@ async function importTripData(request, user, tripId) {
         data = attachTemporalInstants(collection, data, await tripTimeZone(tripId));
         attachExactMoney(data, ENTITY_CONTRACTS[collection]?.money || [], await tripCurrency(tripId));
         validateEntity(collection, data);
-        await assertFinancialMembers(tripId, data);
+        await assertFinancialMembers(tripId, data, collection);
         const entityId = newId(collection.slice(0, 3));
         await extractMediaAssets(tripId, collection, entityId, data, user.id);
         await db.prepare(
@@ -1179,8 +1307,15 @@ async function assertReservationReference(tripId, reservation) {
     throw new HttpError(422, "INVALID_RESERVATION_LINK", "El elemento vinculado no existe en este viaje.");
   }
 }
-async function assertFinancialMembers(tripId, data) {
+async function assertFinancialMembers(tripId, data, collection = "") {
   const splitIds = (data.splits || []).map((split) => split?.memberUserId).filter(Boolean);
+  const splitParticipantIds = (data.splits || []).map((split) => split?.participantId).filter(Boolean);
+  const participantIds = [
+    data.paidByParticipantId,
+    data.participantId,
+    ...(Array.isArray(data.participantIds) ? data.participantIds : []),
+    ...splitParticipantIds,
+  ].filter(Boolean);
   if (new Set(splitIds).size !== splitIds.length) {
     throw new HttpError(422, "DUPLICATE_SPLIT_MEMBER", "Un viajero no puede aparecer dos veces en el reparto.");
   }
@@ -1188,6 +1323,33 @@ async function assertFinancialMembers(tripId, data) {
   for (const userId of new Set(memberIds)) {
     if (!await db.prepare("SELECT 1 FROM trip_members WHERE trip_id=? AND user_id=?").get(tripId, userId)) {
       throw new HttpError(422, "INVALID_FINANCIAL_MEMBER", "El pagador o participante no pertenece al viaje.");
+    }
+  }
+  if (new Set(splitParticipantIds).size !== splitParticipantIds.length) {
+    throw new HttpError(422, "DUPLICATE_SPLIT_PARTICIPANT", "Un participante no puede aparecer dos veces.");
+  }
+  for (const participantId of new Set(participantIds)) {
+    if (
+      !await db.prepare("SELECT 1 FROM trip_participants WHERE trip_id=? AND id=? AND active=TRUE").get(
+        tripId,
+        participantId,
+      )
+    ) throw new HttpError(422, "INVALID_FINANCIAL_PARTICIPANT", "El participante no pertenece al viaje.");
+  }
+  const exactSplits = (data.splits || []).filter((split) => split?.amountMinor !== undefined);
+  if (exactSplits.length) {
+    if (exactSplits.length !== data.splits.length) {
+      throw new HttpError(422, "INVALID_SPLIT_TOTAL", "No mezcles importes exactos con repartos proporcionales.");
+    }
+    const paidField = collection === "expenses"
+      ? "actualAmount"
+      : collection === "purchases"
+      ? "actualPrice"
+      : "paidAmount";
+    const total = monetaryField(data, paidField, data.currency || "JPY");
+    const splitTotal = exactSplits.reduce((sum, split) => sum + BigInt(split.amountMinor), 0n);
+    if (splitTotal !== BigInt(total.minorUnits)) {
+      throw new HttpError(422, "INVALID_SPLIT_TOTAL", "Los importes del reparto deben sumar el total pagado.");
     }
   }
 }
@@ -1324,6 +1486,26 @@ function validateEntity(collection, data) {
   }
   if (collection === "activities" && data.end <= data.start) {
     throw new HttpError(422, "INVALID_TIME", "La hora final debe ser posterior a la inicial.");
+  }
+  if (collection === "availabilities" && data.endAt <= data.startAt) {
+    throw new HttpError(422, "INVALID_AVAILABILITY", "El final de la disponibilidad debe ser posterior al inicio.");
+  }
+  if (
+    collection === "availabilities" &&
+    (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(data.startAt) ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(data.endAt))
+  ) {
+    throw new HttpError(422, "INVALID_AVAILABILITY", "Las fechas de disponibilidad no son válidas.");
+  }
+  if (collection === "locationShares") {
+    const expiresAt = Date.parse(data.expiresAt);
+    if (
+      !Number.isFinite(Number(data.latitude)) || Math.abs(Number(data.latitude)) > 90 ||
+      !Number.isFinite(Number(data.longitude)) || Math.abs(Number(data.longitude)) > 180 ||
+      !Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 60 * 60 * 1000
+    ) {
+      throw new HttpError(422, "INVALID_LOCATION_SHARE", "La ubicación temporal no es válida.");
+    }
   }
   if (collection === "activities" && data.activityKind) {
     if (!["General", "Lugar", "Hospedaje", "Transporte"].includes(data.activityKind)) {

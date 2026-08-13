@@ -312,6 +312,26 @@ Deno.test({
     const accepted = await call("POST", `/api/invite/${token}/accept`, {}, alex.cookie);
     assertEquals(accepted.status, 200);
     assertEquals(accepted.data.tripId, tripId);
+    const participantList = await call("GET", `/api/trips/${tripId}/participants`, null, owner.cookie);
+    assertEquals(participantList.status, 200);
+    assertEquals(participantList.data.participants.length, 2);
+    const ownerParticipant = participantList.data.participants.find((item) => item.userId === owner.data.user.id);
+    const alexParticipant = participantList.data.participants.find((item) => item.userId === alex.data.user.id);
+    assert(ownerParticipant && alexParticipant, "Cada miembro debe tener un participante financiero");
+    const proposal = await call("POST", `/api/trips/${tripId}/proposals`, {
+      title: "Excursión a Nikko",
+      status: "Abierta",
+      votes: {},
+    }, owner.cookie);
+    assertEquals(proposal.status, 201);
+    const viewerVote = await call(
+      "POST",
+      `/api/trips/${tripId}/proposals/${proposal.data.item.id}/vote`,
+      { choice: "yes" },
+      alex.cookie,
+    );
+    assertEquals(viewerVote.status, 200, "Un viewer debe poder votar sin poder editar la propuesta");
+    assertEquals(viewerVote.data.item.votes[alex.data.user.id], "yes");
     const comment = await call("POST", `/api/trips/${tripId}/comments`, {
       entityCollection: "places",
       entityId: place.data.item.id,
@@ -344,6 +364,55 @@ Deno.test({
       owner.cookie,
     );
     assertEquals(roleChange.status, 200);
+    const guest = await call(
+      "POST",
+      `/api/trips/${tripId}/participants`,
+      { name: "Invitado sin cuenta" },
+      owner.cookie,
+    );
+    assertEquals(guest.status, 201);
+    const exactExpense = await call("POST", `/api/trips/${tripId}/expenses`, {
+      title: "Cena con invitado",
+      currency: "JPY",
+      actualAmount: 1200,
+      paymentStatus: "Pagado",
+      paidByParticipantId: ownerParticipant.id,
+      splitMode: "amount",
+      splits: [
+        { participantId: ownerParticipant.id, amountMinor: "500" },
+        { participantId: alexParticipant.id, amountMinor: "400" },
+        { participantId: guest.data.participant.id, amountMinor: "300" },
+      ],
+    }, owner.cookie);
+    assertEquals(exactExpense.status, 201);
+    assertEquals(exactExpense.data.expenseSplits.length, 3);
+    assertEquals(
+      exactExpense.data.expenseSplits.reduce((sum, split) => sum + Number(split.amount.minorUnits), 0),
+      1200,
+    );
+    const invalidExactExpense = await call("POST", `/api/trips/${tripId}/expenses`, {
+      title: "Reparto incompleto",
+      currency: "JPY",
+      actualAmount: 1200,
+      paymentStatus: "Pagado",
+      paidByParticipantId: ownerParticipant.id,
+      splits: [
+        { participantId: ownerParticipant.id, amountMinor: "500" },
+        { participantId: alexParticipant.id, amountMinor: "500" },
+      ],
+    }, owner.cookie);
+    assertEquals(invalidExactExpense.status, 422);
+    assertEquals(invalidExactExpense.data.error.code, "INVALID_SPLIT_TOTAL");
+    const settlement = await call("POST", `/api/trips/${tripId}/settlements`, {
+      fromParticipantId: guest.data.participant.id,
+      toParticipantId: ownerParticipant.id,
+      amount: 100,
+      currency: "JPY",
+      paidOn: "2026-09-18",
+      note: "Pago parcial",
+    }, owner.cookie);
+    assertEquals(settlement.status, 201);
+    assertEquals(settlement.data.settlement?.status, "confirmed");
     const sharedExpense = await call("POST", `/api/trips/${tripId}/expenses`, {
       title: "Cena compartida",
       currency: "JPY",

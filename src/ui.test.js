@@ -239,3 +239,30 @@ Deno.test("Fase 3 ofrece dashboard contextual, plantillas y actualización PWA c
     throw new Error("El manifiesto no ofrece suficientes accesos rápidos");
   }
 });
+
+Deno.test("los viajes en grupo integran reparto, votación, modo Hoy y utilidades durante el viaje", async () => {
+  const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  const api = await Deno.readTextFile(new URL("../backend/api.js", import.meta.url));
+  const database = await Deno.readTextFile(new URL("../backend/database.js", import.meta.url));
+  for (
+    const marker of [
+      "splitParticipantIds",
+      "data-settle-transfer",
+      "renderToday",
+      "renderNotifications",
+      "data-vote-proposal",
+      "data-share-location",
+      "data-task-template",
+      "data-import-reservation",
+      "itineraryAvailabilityWarnings",
+    ]
+  ) {
+    if (!app.includes(marker)) throw new Error(`Falta la experiencia de grupo ${marker}`);
+  }
+  for (const marker of ['resource === "participants"', 'resource === "settlements"', 'parts[4] === "vote"']) {
+    if (!api.includes(marker)) throw new Error(`Falta el endpoint ${marker}`);
+  }
+  for (const table of ["trip_participants", "expense_splits", "settlement_payments", "notification_reads"]) {
+    if (!database.includes(table)) throw new Error(`Falta persistencia para ${table}`);
+  }
+});

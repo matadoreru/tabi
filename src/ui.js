@@ -206,8 +206,8 @@ export function modal({
     }).join("");
     let control = `<input id="field-${field.name}" name="${field.name}" type="${field.type || "text"}" value="${
       esc(value)
-    }" ${required} ${field.min !== undefined ? `min="${field.min}"` : ""} ${
-      field.step ? `step="${field.step}"` : ""
+    }" ${required} ${field.min !== undefined ? `min="${field.min}"` : ""} ${field.step ? `step="${field.step}"` : ""} ${
+      field.accept ? `accept="${esc(field.accept)}"` : ""
     } placeholder="${esc(field.placeholder || "")}" />`;
     if (field.type === "select") {
       control = `<select id="field-${field.name}" name="${field.name}" ${required}>${

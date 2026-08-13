@@ -13,6 +13,11 @@ export const ENTITY_CONTRACTS = Object.freeze({
   reminders: { required: ["title", "remindAt"] },
   inspirations: { required: ["url"] },
   notes: { required: ["title"] },
+  proposals: { required: ["title"] },
+  availabilities: { required: ["participantId", "startAt", "endAt"] },
+  journalEntries: { required: ["date", "title"] },
+  emergencyContacts: { required: ["name", "phone"] },
+  locationShares: { required: ["latitude", "longitude", "expiresAt"] },
 });
 
 export const MONEY_FIELDS = Object.freeze(
@@ -48,7 +53,8 @@ export function entityContractIssues(collection, value) {
     } else {
       value.splits.forEach((split, index) => {
         if (
-          !split || typeof split !== "object" || (!split.memberUserId && !String(split.participantName || "").trim())
+          !split || typeof split !== "object" ||
+          (!split.participantId && !split.memberUserId && !String(split.participantName || "").trim())
         ) {
           issues.push({ field: `splits.${index}`, code: "INVALID_SPLIT", message: "Participante no válido." });
         }
@@ -59,7 +65,31 @@ export function entityContractIssues(collection, value) {
             message: "Importe de reparto no válido.",
           });
         }
+        if (
+          split?.percentage !== undefined &&
+          (!Number.isFinite(Number(split.percentage)) || Number(split.percentage) < 0)
+        ) {
+          issues.push({ field: `splits.${index}.percentage`, code: "INVALID_SPLIT", message: "Porcentaje no válido." });
+        }
+        if (
+          split?.weight !== undefined &&
+          (!Number.isFinite(Number(split.weight)) || Number(split.weight) <= 0)
+        ) {
+          issues.push({ field: `splits.${index}.weight`, code: "INVALID_SPLIT", message: "Peso no válido." });
+        }
       });
+      const percentages = value.splits.filter((split) => split?.percentage !== undefined);
+      if (
+        percentages.length &&
+        (percentages.length !== value.splits.length ||
+          Math.abs(percentages.reduce((sum, split) => sum + Number(split.percentage), 0) - 100) > 0.001)
+      ) {
+        issues.push({
+          field: "splits",
+          code: "INVALID_SPLIT_PERCENTAGE",
+          message: "Los porcentajes deben sumar 100 %.",
+        });
+      }
     }
   }
   return issues;

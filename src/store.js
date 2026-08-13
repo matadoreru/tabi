@@ -18,6 +18,11 @@ const COLLECTIONS = [
   "inspirations",
   "notes",
   "reminders",
+  "proposals",
+  "availabilities",
+  "journalEntries",
+  "emergencyContacts",
+  "locationShares",
 ];
 
 export class Store {
@@ -35,6 +40,9 @@ export class Store {
       expenseSplits: [],
       settlementBalances: [],
       settlementTransfers: [],
+      settlementPayments: [],
+      participants: [],
+      notifications: [],
       connectionStatus: "online",
       exchangeRates: {},
       exchangeRateMeta: {},

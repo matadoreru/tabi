@@ -28,3 +28,17 @@ Deno.test("reinicia progreso y filtra colecciones de duplicación", () => {
   assertEquals(options.shiftDays, 9);
   assertEquals([...options.collections], ["places"]);
 });
+
+Deno.test("desplaza disponibilidad y reinicia las votaciones de una plantilla", () => {
+  assertEquals(
+    shiftEntityDates("availabilities", {
+      startAt: "2026-09-17T08:00",
+      endAt: "2026-09-18T12:00",
+    }, 3),
+    { startAt: "2026-09-20T08:00", endAt: "2026-09-21T12:00" },
+  );
+  assertEquals(resetEntityProgress("proposals", { status: "Aceptada", votes: { a: "yes" } }), {
+    status: "Abierta",
+    votes: {},
+  });
+});

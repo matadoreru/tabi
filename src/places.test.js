@@ -1,4 +1,4 @@
-import { googlePlaceMetadata, itineraryRoutePairs, placeMetadataIsStale } from "./places.js";
+import { googlePlaceMetadata, itineraryRoutePairs, optimizedActivitySlots, placeMetadataIsStale } from "./places.js";
 
 function assertEquals(actual, expected) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -27,4 +27,14 @@ Deno.test("crea trayectos solo entre actividades geolocalizadas", () => {
     { id: "a", start: "09:00", lat: 1, lng: 1 },
   ]);
   assertEquals(pairs.map(({ origin, destination }) => [origin.id, destination.id]), [["a", "b"]]);
+});
+
+Deno.test("propone un orden cercano sin alterar los huecos horarios", () => {
+  const result = optimizedActivitySlots([
+    { id: "a", start: "09:00", end: "10:00", lat: 0, lng: 0 },
+    { id: "b", start: "10:00", end: "11:00", lat: 0, lng: 10 },
+    { id: "c", start: "11:00", end: "12:00", lat: 0, lng: 1 },
+  ]);
+  if (result.map(({ item }) => item.id).join("") !== "acb") throw new Error("Orden inesperado.");
+  if (result.map(({ start }) => start).join(",") !== "09:00,10:00,11:00") throw new Error("Cambió los huecos.");
 });

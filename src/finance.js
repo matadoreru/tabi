@@ -9,6 +9,34 @@ export const FINANCIAL_COLLECTIONS = Object.freeze([
   "funds",
 ]);
 
+/** Reduces participant balances to a deterministic set of transfers per currency. */
+export function simplifySettlementBalances(balances = []) {
+  const transfers = [];
+  for (const currency of new Set(balances.map((balance) => balance.currency))) {
+    const creditors = balances.filter((entry) => entry.currency === currency && BigInt(entry.minorUnits) > 0n)
+      .map((entry) => ({ ...entry, remaining: BigInt(entry.minorUnits) }));
+    const debtors = balances.filter((entry) => entry.currency === currency && BigInt(entry.minorUnits) < 0n)
+      .map((entry) => ({ ...entry, remaining: -BigInt(entry.minorUnits) }));
+    let creditorIndex = 0;
+    let debtorIndex = 0;
+    while (creditorIndex < creditors.length && debtorIndex < debtors.length) {
+      const creditor = creditors[creditorIndex];
+      const debtor = debtors[debtorIndex];
+      const amount = creditor.remaining < debtor.remaining ? creditor.remaining : debtor.remaining;
+      transfers.push({
+        fromParticipantId: debtor.participantId,
+        toParticipantId: creditor.participantId,
+        amount: { currency, minorUnits: amount.toString() },
+      });
+      creditor.remaining -= amount;
+      debtor.remaining -= amount;
+      if (creditor.remaining === 0n) creditorIndex++;
+      if (debtor.remaining === 0n) debtorIndex++;
+    }
+  }
+  return transfers;
+}
+
 function transaction(sourceCollection, source, kind, field, options = {}) {
   const amount = options.amount || monetaryField(source, field, options.fallbackCurrency);
   if (BigInt(amount.minorUnits) <= 0n) return null;
@@ -21,6 +49,7 @@ function transaction(sourceCollection, source, kind, field, options = {}) {
     state: options.state || "confirmed",
     amount,
     payerId: source.paidByUserId || source.paidById || source.payerId || null,
+    payerParticipantId: source.paidByParticipantId || null,
     occurredOn: source.date || source.departureDate || source.checkInDate || null,
     title: source.title || source.product || source.name || `${source.origin || ""} – ${source.destination || ""}`,
     exchange: source.exchangeRateSnapshot

@@ -1,4 +1,4 @@
-const CACHE = "tabi-v16";
+const CACHE = "tabi-v17";
 const PRIVATE_CACHE = "tabi-private-v1";
 const ASSETS = [
   "./",
@@ -21,6 +21,8 @@ const ASSETS = [
   "./src/places.js",
   "./src/templates.js",
   "./src/trip-phase.js",
+  "./src/reservation-import.js",
+  "./src/task-templates.js",
   "./src/pwa.js",
   "./src/offline-cache.js",
   "./src/domain.js",

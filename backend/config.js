@@ -37,4 +37,9 @@ export const ENTITY_TABLES = Object.freeze({
   inspirations: "inspirations",
   notes: "notes",
   reminders: "reminders",
+  proposals: "proposals",
+  availabilities: "availabilities",
+  journalEntries: "journal_entries",
+  emergencyContacts: "emergency_contacts",
+  locationShares: "location_shares",
 });

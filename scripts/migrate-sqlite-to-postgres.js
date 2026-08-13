@@ -132,6 +132,24 @@ try {
       }
     }
 
+    // The PostgreSQL schema is initialized before legacy members are copied, so the
+    // regular schema backfill cannot see them during a fresh SQLite migration.
+    await db.exec(`
+      INSERT INTO trip_participants(id,trip_id,user_id,name,kind,active,created_at,updated_at,created_by)
+      SELECT 'par_' || md5(tm.trip_id || tm.user_id),tm.trip_id,tm.user_id,u.name,'member',TRUE,
+        tm.joined_at,tm.joined_at,tm.invited_by
+      FROM trip_members tm JOIN users u ON u.id=tm.user_id
+      ON CONFLICT DO NOTHING;
+
+      UPDATE financial_transactions f SET payer_participant_id=p.id
+      FROM trip_participants p
+      WHERE f.trip_id=p.trip_id AND f.payer_id=p.user_id AND f.payer_participant_id IS NULL;
+
+      UPDATE expense_splits s SET participant_id=p.id
+      FROM trip_participants p
+      WHERE s.trip_id=p.trip_id AND s.member_user_id=p.user_id AND s.participant_id IS NULL;
+    `);
+
     for (const [table, columns] of tables) {
       const destination = Number((await db.prepare(`SELECT COUNT(*)::integer count FROM ${table}`).get()).count);
       if (destination !== counts[table]) {

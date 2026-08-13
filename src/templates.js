@@ -9,6 +9,9 @@ const DATE_FIELDS = Object.freeze({
   transports: ["departureDate", "arrivalDate"],
   reservations: ["date"],
   reminders: ["remindAt"],
+  proposals: ["date"],
+  availabilities: ["startAt", "endAt"],
+  journalEntries: ["date"],
 });
 
 export const DUPLICABLE_COLLECTIONS = Object.freeze([
@@ -24,6 +27,10 @@ export const DUPLICABLE_COLLECTIONS = Object.freeze([
   "inspirations",
   "notes",
   "reminders",
+  "proposals",
+  "availabilities",
+  "journalEntries",
+  "emergencyContacts",
 ]);
 
 export const DEFAULT_TEMPLATE_COLLECTIONS = Object.freeze([
@@ -37,6 +44,9 @@ export const DEFAULT_TEMPLATE_COLLECTIONS = Object.freeze([
   "inspirations",
   "notes",
   "reminders",
+  "proposals",
+  "availabilities",
+  "emergencyContacts",
 ]);
 
 export function addIsoDays(value, days) {
@@ -82,6 +92,10 @@ export function resetEntityProgress(collection, source) {
   if (collection === "transports") item.status = "Por reservar";
   if (collection === "reservations") item.status = "Pendiente";
   if (collection === "reminders") item.status = "pending";
+  if (collection === "proposals") {
+    item.status = "Abierta";
+    item.votes = {};
+  }
   return item;
 }
 

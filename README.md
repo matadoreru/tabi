@@ -26,14 +26,22 @@ Itinerario, mapa, reservas, presupuesto y colaboración en tiempo real.
 | 🗓️ | **Itinerario**     | Planifica cada día, detecta solapamientos y calcula desplazamientos.      |
 | 🗺️ | **Mapa y lugares** | Guarda lugares de Google Places con ubicación, datos e imagen automática. |
 | 🎫 | **Reservas**       | Relaciona reservas con actividades, alojamientos y transportes.           |
-| 💰 | **Presupuesto**    | Controla gastos, fondos y liquidaciones en dos monedas.                   |
+| 💰 | **Presupuesto**    | Reparte gastos, salda deudas y controla importes en dos monedas.          |
 | 👥 | **Colaboración**   | Invita viajeros, asigna permisos y recibe cambios en tiempo real.         |
 | ✅ | **TODO**           | Gestiona una lista común con responsables, prioridad y fecha límite.      |
 | 📴 | **Modo offline**   | Consulta el último viaje y crea elementos aunque pierdas la conexión.     |
 | 📱 | **PWA**            | Instala Tabi en móvil u ordenador como una aplicación.                    |
 
-También incluye compras con fotografías, hospedaje, transporte, notas, inspiración, calendario ICS, recordatorios,
-plantillas y duplicación inteligente de viajes.
+También incluye:
+
+- participantes con o sin cuenta, pagador real y repartos iguales, exactos, porcentuales o por participaciones;
+- saldos por persona y liquidaciones sugeridas con el menor número práctico de transferencias;
+- modo **Hoy**, búsqueda global, notificaciones del grupo, historial restaurable y diario del viaje;
+- propuestas con votación, disponibilidad individual y avisos cuando un plan no encaja;
+- previsión meteorológica, optimización de visitas y enlaces de seguimiento de transportes;
+- importación asistida de confirmaciones, gastos recurrentes y plantillas de equipaje/TODO;
+- contactos de emergencia offline y ubicación voluntaria que caduca a los 30 minutos;
+- compras con fotografías, calendario ICS, recordatorios y duplicación inteligente de viajes.
 
 ## 🚀 Inicio rápido
 
@@ -92,15 +100,10 @@ docker compose logs --tail=100 app postgres
 ## 🧪 Desarrollo y pruebas
 
 ```bash
-# Formato
-deno fmt --check
-
-# Lint
-deno lint
-
-# Comprobación de tipos
-deno check src/app.js
-deno check server.js
+# Formato, lint y comprobación de módulos
+deno task format:check
+deno task lint
+deno task check
 
 # Suite completa (requiere PostgreSQL de pruebas)
 deno task test
@@ -136,22 +139,26 @@ usuario, pero todas las operaciones vuelven a validarse y autorizarse en el serv
 | `backend/auth.js`           | Registro, login, sesiones y contraseñas.              |
 | `backend/authorization.js`  | Membresía, capacidades y protección anti-IDOR.        |
 | `backend/finance.js`        | Proyección financiera, repartos y liquidaciones.      |
+| `backend/group-travel.js`   | Participantes, votos, pagos y notificaciones.         |
 | `backend/media.js`          | Almacenamiento autenticado de imágenes.               |
 | `backend/events.js`         | Sincronización mediante Server-Sent Events.           |
 | `backend/exchange-rates.js` | Proveedor y caché de tipos de cambio.                 |
+| `backend/weather.js`        | Proveedor desacoplado y caché de previsión.           |
 
 ### Frontend y dominio
 
-| Módulo                 | Responsabilidad                                 |
-| ---------------------- | ----------------------------------------------- |
-| `src/app.js`           | Router, controladores y composición de vistas.  |
-| `src/store.js`         | Repositorio remoto y sincronización.            |
-| `src/contracts.js`     | Contratos compartidos y validación estructural. |
-| `src/money.js`         | Aritmética monetaria decimal exacta.            |
-| `src/finance.js`       | Reglas financieras puras.                       |
-| `src/time.js`          | Zonas horarias e instantes UTC.                 |
-| `src/offline-cache.js` | Caché local y operaciones pendientes.           |
-| `src/permissions.js`   | Capacidades y roles centralizados.              |
+| Módulo                 | Responsabilidad                                  |
+| ---------------------- | ------------------------------------------------ |
+| `src/app.js`           | Router, controladores y composición de vistas.   |
+| `src/store.js`         | Repositorio remoto y sincronización.             |
+| `src/contracts.js`     | Contratos compartidos y validación estructural.  |
+| `src/money.js`         | Aritmética monetaria decimal exacta.             |
+| `src/finance.js`       | Reglas financieras puras.                        |
+| `src/time.js`          | Zonas horarias e instantes UTC.                  |
+| `src/offline-cache.js` | Caché local y operaciones pendientes.            |
+| `src/templates.js`     | Duplicación segura, fechas y reinicio de estado. |
+| `src/places.js`        | Metadatos, trayectos y orden sugerido.           |
+| `src/permissions.js`   | Capacidades y roles centralizados.               |
 
 </details>
 

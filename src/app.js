@@ -47,15 +47,17 @@ import { session } from "./session.js";
 import { PERMISSIONS, ROLE_LABELS } from "./permissions.js";
 import { initializeImageLightbox } from "./lightbox.js";
 import { canonicalBudgetSummary } from "./finance.js";
-import { convertMoney, moneyToNumber } from "./money.js";
+import { decimalToMinor, minorToDecimal, moneyToNumber } from "./money.js";
 import { NAVIGATION, ROUTE_DESCRIPTIONS, ROUTE_LABELS } from "./navigation.js";
 import { browserTimeZone, timeZoneOptions, todayInTimeZone } from "./time.js";
 import { exportTripIcs } from "./calendar.js";
-import { googlePlaceMetadata, itineraryRoutePairs, placeMetadataIsStale } from "./places.js";
+import { googlePlaceMetadata, itineraryRoutePairs, optimizedActivitySlots, placeMetadataIsStale } from "./places.js";
 import { DEFAULT_TEMPLATE_COLLECTIONS, DUPLICABLE_COLLECTIONS } from "./templates.js";
 import { TRIP_PHASES, tripPhase, tripPhaseCopy } from "./trip-phase.js";
 import { pwaManager } from "./pwa.js";
 import { tripCache } from "./offline-cache.js";
+import { parseReservationText } from "./reservation-import.js";
+import { TASK_TEMPLATES, templateTasks } from "./task-templates.js";
 
 const store = new Store();
 const LAST_TRIP_KEY = "tabi-last-trip-v1";
@@ -76,6 +78,8 @@ const ui = {
   routeEstimates: {},
   unseenChanges: 0,
   pwaDiagnostics: null,
+  weather: {},
+  globalQuery: "",
 };
 
 const NAV = NAVIGATION;
@@ -167,6 +171,19 @@ const fields = {
       label: "Estado",
       type: "select",
       options: [{ value: "planned", label: "Planeado" }, { value: "done", label: "Realizado" }],
+    },
+    {
+      name: "participantIds",
+      label: "Participan",
+      type: "checkbox-group",
+      help: "Déjalo vacío si participa todo el grupo.",
+      full: true,
+    },
+    {
+      name: "fixedTime",
+      label: "Horario",
+      type: "select",
+      options: [{ value: "false", label: "Flexible" }, { value: "true", label: "Fijo · no mover al optimizar" }],
     },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
@@ -294,14 +311,29 @@ const fields = {
     { name: "estimatedAmount", label: "Importe previsto", type: "number", min: 0, step: "0.01" },
     { name: "actualAmount", label: "Importe pagado", type: "number", min: 0, step: "0.01" },
     { name: "paymentStatus", label: "Pago", type: "select", options: ["Pendiente", "Parcial", "Pagado"] },
-    { name: "paidByUserId", label: "Pagado por", type: "select", empty: "Fondo común / sin asignar" },
+    { name: "paidByParticipantId", label: "Pagado por", type: "select", empty: "Sin asignar" },
     {
-      name: "splitMemberIds",
-      label: "Repartir entre",
-      type: "checkbox-group",
-      help: "Si seleccionas viajeros, el importe pagado se reparte a partes iguales.",
+      name: "splitMode",
+      label: "Tipo de gasto",
+      type: "select",
+      options: [
+        { value: "personal", label: "Personal · una persona" },
+        { value: "equal", label: "Compartido · partes iguales" },
+        { value: "amount", label: "Compartido · importes exactos" },
+        { value: "percentage", label: "Compartido · porcentajes" },
+        { value: "shares", label: "Compartido · participaciones" },
+      ],
       full: true,
     },
+    {
+      name: "splitParticipantIds",
+      label: "Repartir entre",
+      type: "checkbox-group",
+      help: "Selecciona quién disfrutó del gasto. En modo personal debe haber una sola persona.",
+      full: true,
+    },
+    { name: "repeatCount", label: "Repeticiones", type: "number", min: 1, step: "1", value: 1 },
+    { name: "repeatEveryDays", label: "Cada cuántos días", type: "number", min: 1, step: "1", value: 1 },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
   fund: [
@@ -403,6 +435,7 @@ const fields = {
     },
     { name: "paymentStatus", label: "Pago", type: "select", options: ["Pendiente", "Parcial", "Pagado"] },
     { name: "reservation", label: "Reserva" },
+    { name: "serviceNumber", label: "Número de vuelo / tren" },
     { name: "seat", label: "Asiento" },
     {
       name: "status",
@@ -411,6 +444,7 @@ const fields = {
       options: ["Por reservar", "Confirmado", "Realizado", "Cancelado"],
     },
     { name: "link", label: "Enlace", type: "url", full: true },
+    { name: "statusUrl", label: "Enlace de seguimiento oficial", type: "url", full: true },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ],
   reservation: [
@@ -489,21 +523,106 @@ const fields = {
       full: true,
     },
   ],
+  proposal: [
+    { name: "title", label: "Propuesta", required: true, full: true },
+    { name: "description", label: "Detalles", type: "textarea", full: true },
+    { name: "date", label: "Fecha sugerida", type: "date" },
+    { name: "status", label: "Estado", type: "select", options: ["Abierta", "Aceptada", "Descartada"] },
+  ],
+  availability: [
+    { name: "participantId", label: "Participante", type: "select", required: true },
+    { name: "startAt", label: "Disponible desde", type: "datetime-local", required: true },
+    { name: "endAt", label: "Disponible hasta", type: "datetime-local", required: true },
+    { name: "note", label: "Nota", full: true },
+  ],
+  journal: [
+    { name: "date", label: "Fecha", type: "date", required: true },
+    { name: "title", label: "Título", required: true },
+    { name: "content", label: "Recuerdo", type: "textarea", full: true },
+  ],
+  emergency: [
+    { name: "name", label: "Contacto o servicio", required: true },
+    { name: "phone", label: "Teléfono", type: "tel", required: true },
+    { name: "details", label: "Información útil", type: "textarea", full: true },
+  ],
 };
 
 function resolvedFields(type, values = {}) {
-  return fields[type].map((field) => ({
+  const resolved = fields[type].map((field) => ({
     ...field,
     options: type === "fund" && field.name === "contributor"
       ? fundContributorOptions(store.getState().members, values.contributor)
-      : ["task:assigneeId", "expense:paidByUserId"].includes(`${type}:${field.name}`)
+      : ["task:assigneeId"].includes(`${type}:${field.name}`)
       ? memberOptions(values[field.name])
-      : type === "expense" && field.name === "splitMemberIds"
-      ? memberOptions().filter((option) => !option.value.startsWith("usr_missing"))
+      : type === "expense" && ["paidByParticipantId", "splitParticipantIds"].includes(field.name)
+      ? participantOptions(values[field.name])
+      : type === "availability" && field.name === "participantId"
+      ? participantOptions(values[field.name])
+      : type === "activity" && field.name === "participantIds"
+      ? participantOptions()
       : typeof field.options === "function"
       ? field.options()
       : field.options,
   }));
+  if (type === "expense") {
+    for (const participant of store.collection("participants").filter((item) => item.active)) {
+      resolved.push({
+        name: `splitValue_${participant.id}`,
+        label: `Valor personalizado · ${participant.name}`,
+        type: "number",
+        min: 0,
+        step: "0.01",
+        value: values[`splitValue_${participant.id}`] || "",
+        help: "Importe, porcentaje o número de participaciones según el tipo elegido.",
+        full: true,
+      });
+    }
+  }
+  return resolved;
+}
+
+function participantOptions(currentId = "", includeInactive = false) {
+  const options = store.collection("participants").filter((item) =>
+    includeInactive || item.active || item.id === currentId
+  ).map((
+    item,
+  ) => ({
+    value: item.id,
+    label: `${item.name}${item.kind === "guest" ? " · sin cuenta" : ""}${item.active ? "" : " · inactivo"}`,
+  }));
+  if (currentId && !options.some(({ value }) => value === currentId)) {
+    options.push({ value: currentId, label: "Participante anterior" });
+  }
+  return options;
+}
+
+function participantName(participantId, fallback = "Sin asignar") {
+  return store.collection("participants").find((item) => item.id === participantId)?.name || fallback;
+}
+
+function currentParticipantId() {
+  return store.collection("participants").find((item) => item.userId === session.currentUser?.id)?.id || "";
+}
+
+function initializeExpenseFields(root) {
+  const mode = root.querySelector("#field-splitMode");
+  const selected = () =>
+    new Set(
+      [...root.querySelectorAll('input[name="splitParticipantIds"]:checked')].map((input) => input.value),
+    );
+  const refresh = () => {
+    const custom = ["amount", "percentage", "shares"].includes(mode.value);
+    const active = selected();
+    for (const participant of store.collection("participants")) {
+      const wrapper = root.querySelector(`[data-field="splitValue_${participant.id}"]`);
+      if (wrapper) wrapper.hidden = !custom || !active.has(participant.id);
+    }
+  };
+  mode?.addEventListener("change", refresh);
+  root.querySelectorAll('input[name="splitParticipantIds"]').forEach((input) =>
+    input.addEventListener("change", refresh)
+  );
+  refresh();
 }
 
 function reservationLinkOptions() {
@@ -613,7 +732,11 @@ function canonicalMovementItems() {
       category: entry.category,
       date: entry.occurredOn,
       city: entry.sourceCollection,
-      paidByName: memberName(entry.payerId, "Sin asignar"),
+      paidByName: entry.payerParticipantId
+        ? participantName(entry.payerParticipantId, "Sin asignar")
+        : memberName(entry.payerId, "Sin asignar"),
+      recurrenceIndex: entry.recurrenceIndex,
+      recurrenceCount: entry.recurrenceCount,
       currency: store.activeTrip.currency,
       estimatedAmount: 0,
       actualAmount: 0,
@@ -735,6 +858,7 @@ function versionReference(className = "") {
 function layout(content) {
   const trip = store.activeTrip;
   const members = store.collection("members");
+  const unreadNotifications = store.collection("notifications").filter((item) => !item.read).length;
   return `<div class="app-shell">
     <aside class="sidebar"><a class="brand" href="#dashboard"><span class="brand-mark">旅</span><span>Tabi<small>Travel planner</small></span></a><nav class="nav">${
     NAV.map(([r, l, i]) => navButton(r, l, i)).join("")
@@ -744,10 +868,20 @@ function layout(content) {
     versionReference("app-version-sidebar")
   }</div></aside>
     <main class="main" id="main-content" tabindex="-1"><header class="topbar"><div class="page-heading"><h1>${
-    ROUTES[ui.route] || "Tabi"
+    ROUTES[ui.route] || ({ today: "Hoy", notifications: "Notificaciones", search: "Buscar" })[ui.route] || "Tabi"
   }</h1><p>${
-    DESCRIPTIONS[ui.route] || ""
-  }</p></div><div class="top-actions"><button class="avatar-stack desktop-only" data-route="settings" aria-label="Miembros del viaje">${
+    DESCRIPTIONS[ui.route] || ({
+      today: "Lo necesario para moverte durante el día",
+      notifications: "Cambios importantes del grupo",
+      search: "Encuentra cualquier dato del viaje",
+    })[ui.route] || ""
+  }</p></div><div class="top-actions"><button class="btn btn-secondary icon-btn" type="button" data-route="search" aria-label="Buscar en el viaje" title="Buscar · Ctrl/⌘ K">${
+    icon("search")
+  }</button><button class="btn btn-secondary icon-btn notification-button" type="button" data-route="notifications" aria-label="Notificaciones">${
+    icon("alert")
+  }${
+    unreadNotifications ? `<span>${unreadNotifications > 99 ? "99+" : unreadNotifications}</span>` : ""
+  }</button><button class="avatar-stack desktop-only" data-route="settings" aria-label="Miembros del viaje">${
     members.slice(0, 3).map((member) => avatar(member.user)).join("")
   }${members.length > 3 ? `<span class="avatar more">+${members.length - 3}</span>` : ""}</button>${
     session.can(PERMISSIONS.MEMBER_INVITE)
@@ -791,6 +925,7 @@ function render() {
   applyTheme();
   const renderers = {
     dashboard: renderDashboard,
+    today: renderToday,
     itinerary: renderItinerary,
     map: renderMap,
     places: renderPlaces,
@@ -803,11 +938,94 @@ function render() {
     reservations: renderReservations,
     inspiration: renderInspiration,
     settings: renderSettings,
+    notifications: renderNotifications,
+    search: renderGlobalSearch,
     more: renderMore,
   };
   app.innerHTML = layout((renderers[ui.route] || renderDashboard)());
   bindCommon();
   bindRoute();
+}
+
+const SEARCH_COLLECTIONS = Object.freeze({
+  activities: ["Itinerario", "itinerary", ["title", "location", "city"]],
+  places: ["Lugar", "places", ["name", "city", "area"]],
+  reservations: ["Reserva", "reservations", ["title", "reference", "notes"]],
+  transports: ["Transporte", "transport", ["origin", "destination", "operator", "reservation"]],
+  stays: ["Hospedaje", "stays", ["name", "city", "reference"]],
+  expenses: ["Gasto", "budget", ["title", "category", "notes"]],
+  purchases: ["Compra", "purchases", ["product", "store", "recipient"]],
+  tasks: ["TODO", "tasks", ["title", "notes"]],
+  notes: ["Nota", "notes", ["title", "content"]],
+  inspirations: ["Inspiración", "inspiration", ["note", "url"]],
+});
+
+function renderGlobalSearch() {
+  const query = searchKey(ui.globalQuery);
+  const results = query
+    ? Object.entries(SEARCH_COLLECTIONS).flatMap(([collection, [label, route, fields]]) =>
+      store.collection(collection).filter((item) =>
+        searchKey(fields.map((field) => item[field] || "").join(" ")).includes(query)
+      ).map((item) => ({ collection, label, route, item }))
+    ).slice(0, 100)
+    : [];
+  return `<section class="card card-pad global-search"><div class="global-search-input">${
+    icon("search")
+  }<input type="search" data-global-search value="${
+    esc(ui.globalQuery)
+  }" placeholder="Busca lugares, reservas, referencias, gastos, notas…" autofocus></div><div class="item-list">${
+    results.map(({ collection, label, route, item }) =>
+      `<button class="list-item global-search-result" type="button" data-search-result="${route}:${collection}:${item.id}"><span class="badge blue">${
+        esc(label)
+      }</span><div class="list-item-main"><strong>${esc(entitySearchTitle(item))}</strong><small>${
+        esc(entitySearchSubtitle(item))
+      }</small></div>${icon("chevron")}</button>`
+    ).join("") || (query
+      ? emptyState("Sin resultados", "Prueba con otro nombre, ciudad o referencia.")
+      : `<p class="cell-sub">Escribe para buscar en todo el viaje.</p>`)
+  }</div></section>`;
+}
+
+function entitySearchTitle(item) {
+  return item.title || item.name || item.product || `${item.origin || ""} → ${item.destination || ""}`;
+}
+function entitySearchSubtitle(item) {
+  return item.reference || item.city || item.category || item.date || item.notes || "";
+}
+
+function renderNotifications() {
+  const notifications = store.collection("notifications");
+  return `<div class="section-stack"><section class="card card-pad"><div class="card-head"><div><h2>Actividad para ti</h2><p>Cambios realizados por otros viajeros</p></div>${
+    notifications.some((item) => !item.read)
+      ? `<button class="btn btn-secondary" type="button" data-read-notifications>Marcar todo como leído</button>`
+      : ""
+  }</div><div class="activity-feed">${
+    notifications.map((item) =>
+      `<article class="list-item ${item.read ? "is-muted" : ""}"><span class="stat-icon ${item.read ? "" : "red"}">${
+        icon(item.entityType === "member" ? "users" : item.action.includes("comment") ? "message" : "sync")
+      }</span><div class="list-item-main"><strong>${esc(activityActionLabel(item.action))}</strong><small>${
+        esc(`${item.userName || "Alguien"} · ${item.metadata?.title || item.entityType || "Viaje"}`)
+      } · ${relativeTime(item.createdAt)}</small></div></article>`
+    ).join("") || emptyState("Sin notificaciones", "Los cambios relevantes del grupo aparecerán aquí.")
+  }</div></section></div>`;
+}
+
+function activityActionLabel(action) {
+  return ({
+    "comment.created": "Nuevo comentario",
+    "member.joined": "Nuevo miembro en el viaje",
+    "member.role_changed": "Permisos actualizados",
+    "entity.created": "Se añadió un elemento",
+    "entity.updated": "Se actualizó un elemento",
+    "entity.deleted": "Se eliminó un elemento",
+    "entity.restored": "Se restauró una versión",
+    "proposal.voted": "Se registró un voto",
+    "participant.created": "Se añadió un participante",
+    "participant.updated": "Se actualizó un participante",
+    "participant.deactivated": "Se desactivó un participante",
+    "settlement.created": "Se registró una liquidación",
+    "settlement.updated": "Se actualizó una liquidación",
+  })[action] || "El viaje ha cambiado";
 }
 
 function renderLoading(message = "Preparando tu viaje…") {
@@ -884,6 +1102,8 @@ function renderTripsDashboard() {
   const templates = session.trips.filter((trip) => trip.isTemplate);
   const upcoming = session.trips.filter((trip) => !trip.isTemplate && trip.endDate >= today);
   const past = session.trips.filter((trip) => !trip.isTemplate && trip.endDate < today);
+  const countriesVisited = new Set(past.map((trip) => trip.country).filter(Boolean)).size;
+  const travelDays = past.reduce((sum, trip) => sum + dateRange(trip.startDate, trip.endDate).length, 0);
   app.innerHTML =
     `<main class="trips-shell"><header class="trips-header"><a class="brand" href="/"><span class="brand-mark">旅</span><span>Tabi<small>Travel planner</small></span></a><div class="top-actions">${
       avatar(session.currentUser)
@@ -891,7 +1111,11 @@ function renderTripsDashboard() {
       esc(session.currentUser.name)
     }</strong></span><button class="btn btn-secondary" data-logout>Cerrar sesión</button></div></header><div class="trips-content"><section class="trips-welcome"><div><span class="hero-eyebrow" style="color:var(--primary)">Tu espacio</span><h1>Mis viajes</h1><p>Propios y compartidos, todos en un solo lugar.</p></div><button class="btn btn-primary" data-create-trip>${
       icon("plus")
-    } Crear viaje</button></section>${
+    } Crear viaje</button></section><section class="grid grid-3 trips-history-stats">${
+      statCard("plane", "Viajes realizados", past.length, "", "red")
+    }${statCard("map", "Destinos", countriesVisited, "", "")}${
+      statCard("calendar", "Días de viaje", travelDays, "", "amber")
+    }</section>${
       store.hasLegacyData() && !session.trips.length
         ? `<div class="insight warning">${
           icon("upload")
@@ -1020,6 +1244,10 @@ const DUPLICATE_COLLECTION_LABELS = Object.freeze({
   inspirations: "Inspiración",
   notes: "Notas",
   reminders: "Recordatorios",
+  proposals: "Propuestas y votaciones",
+  availabilities: "Disponibilidad del grupo",
+  journalEntries: "Diario del viaje",
+  emergencyContacts: "Información de emergencia",
 });
 
 function duplicateTripDialog(tripId, asTemplate) {
@@ -1168,12 +1396,40 @@ async function enterTrip(tripId, route = "dashboard") {
     await refreshPwaDiagnostics();
     render();
     notifyDueReminders();
+    loadTripWeather();
   } catch (error) {
     toast(error.message, "error");
     session.clearTrip();
     await session.loadTrips().catch(() => {});
     renderTripsDashboard();
   }
+}
+
+async function loadTripWeather() {
+  const place = store.collection("places").find((item) =>
+    Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng))
+  );
+  if (!place) return;
+  try {
+    const result = await apiClient.get(
+      `/weather?latitude=${encodeURIComponent(place.lat)}&longitude=${encodeURIComponent(place.lng)}&timeZone=${
+        encodeURIComponent(store.activeTrip.timeZone || "UTC")
+      }`,
+    );
+    ui.weather = Object.fromEntries(result.days.map((day) => [day.date, day]));
+    if (ui.route === "itinerary" || ui.route === "dashboard") render();
+  } catch {
+    ui.weather = {};
+  }
+}
+
+function weatherSymbol(code) {
+  if ([0, 1].includes(Number(code))) return "☀️";
+  if ([2, 3].includes(Number(code))) return "☁️";
+  if ([45, 48].includes(Number(code))) return "🌫️";
+  if (Number(code) >= 71 && Number(code) <= 77) return "❄️";
+  if (Number(code) >= 95) return "⛈️";
+  return "🌧️";
 }
 
 async function handleRemoteChange(change) {
@@ -1475,6 +1731,8 @@ function renderDashboard() {
   } · ${trip.travelers} viajeros</p></div><div class="hero-footer"><div class="countdown">${phaseCopy.metric}<small>${phaseCopy.metricLabel}</small></div>${
     phase === TRIP_PHASES.AFTER
       ? `<button class="btn" data-export-project>${icon("download")} Guardar recuerdo</button>`
+      : phase === TRIP_PHASES.DURING
+      ? `<button class="btn" data-route="today">Abrir modo Hoy ${icon("arrow")}</button>`
       : `<button class="btn" data-go-date="${date}">Ver itinerario ${icon("arrow")}</button>`
   }</div></section>
     <div class="grid grid-4 stats-mobile">
@@ -1541,12 +1799,70 @@ function renderDashboard() {
   </div>`;
 }
 
+function renderToday() {
+  const today = todayInTimeZone(store.activeTrip.timeZone);
+  const nowTime = new Intl.DateTimeFormat("es-ES", {
+    timeZone: store.activeTrip.timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date());
+  const activities = activitiesForDate(today).sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  const next = activities.find((item) => item.end >= nowTime) || null;
+  const stay = store.collection("stays").find((item) => item.checkInDate <= today && item.checkOutDate >= today);
+  const transport = store.collection("transports").find((item) =>
+    item.departureDate === today && item.departureTime >= nowTime
+  );
+  const reservations = store.collection("reservations").filter((item) => item.date === today);
+  return `<div class="section-stack today-mode"><section class="hero card"><div><div class="hero-eyebrow">AHORA · ${
+    esc(nowTime)
+  }</div><h2>${next ? esc(next.title) : "Sin más planes para hoy"}</h2><p>${
+    next ? `${esc(next.start)}–${esc(next.end)} · ${esc(next.location || next.city || "")}` : fullDate(today)
+  }</p></div>${next ? activityMapsButton(next) : ""}</section><div class="grid grid-3">${
+    statCard("clock", "Siguiente actividad", next?.start || "—", next?.title || "Día libre", "red")
+  }${
+    statCard(
+      "train",
+      "Próximo transporte",
+      transport?.departureTime || "—",
+      transport ? `${transport.origin} → ${transport.destination}` : "Sin trayectos pendientes",
+      "amber",
+    )
+  }${
+    statCard("bed", "Alojamiento", stay?.name || "—", stay?.address || stay?.city || "", "")
+  }</div><section class="card card-pad"><div class="card-head"><div><h2>Agenda de hoy</h2><p>${activities.length} eventos</p></div><button class="btn btn-secondary" data-go-date="${today}">Abrir itinerario</button></div>${
+    miniTimeline(activities)
+  }</section>${
+    reservations.length
+      ? `<section class="card card-pad"><div class="card-head"><div><h2>Reservas necesarias</h2><p>Referencias para hoy</p></div></div><div class="item-list">${
+        reservations.map((item) =>
+          `<div class="list-item"><div class="list-item-main"><strong>${esc(item.title)}</strong><small>${
+            esc(item.time || "Sin hora")
+          } · ${esc(item.reference || "Sin referencia")}</small></div>${
+            copyReferenceButton("reservations", item)
+          }</div>`
+        ).join("")
+      }</div></section>`
+      : ""
+  }${
+    store.collection("emergencyContacts").length
+      ? `<section class="card card-pad"><div class="card-head"><div><h2>Ayuda rápida</h2><p>Contactos guardados offline</p></div></div><div class="item-list">${
+        store.collection("emergencyContacts").map((item) =>
+          `<a class="list-item" href="tel:${esc(item.phone)}"><div class="list-item-main"><strong>${
+            esc(item.name)
+          }</strong><small>${esc(item.phone)}</small></div>${icon("chevron")}</a>`
+        ).join("")
+      }</div></section>`
+      : ""
+  }</div>`;
+}
+
 function statCard(iconName, label, value, meta, tone, valueIsHtml = false) {
   return `<section class="card stat-card"><div class="stat-top"><span>${
     esc(label)
   }</span><span class="stat-icon ${tone}">${icon(iconName)}</span></div><div><div class="stat-value">${
     valueIsHtml ? value : esc(value)
-  }</div><div class="stat-meta">${esc(meta)}</div></div></section>`;
+  }</div>${meta ? `<div class="stat-meta">${esc(meta)}</div>` : ""}</div></section>`;
 }
 
 function avatar(user, extra = "") {
@@ -1582,6 +1898,7 @@ function activityLogRow(log) {
     "entity.created": `añadió “${title}”`,
     "entity.updated": `actualizó “${title}”`,
     "entity.deleted": `eliminó “${title}”`,
+    "entity.restored": `restauró “${title}”`,
     "member.joined": "se unió al viaje",
     "member.removed": "eliminó un miembro",
     "member.role_changed": "cambió los permisos de un miembro",
@@ -1594,7 +1911,11 @@ function activityLogRow(log) {
     esc(log.userName)
   }</strong><span>${esc(messages[log.action] || "realizó un cambio")}</span><small>${
     relativeTime(log.createdAt)
-  }</small></div></div>`;
+  }</small></div>${
+    log.metadata?.previous && session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-ghost" type="button" data-restore-log="${log.id}">Restaurar</button>`
+      : ""
+  }</div>`;
 }
 function activityKindOf(item) {
   return item.activityKind ||
@@ -1819,7 +2140,13 @@ function renderItinerary() {
   const date = activeDate();
   const items = activitiesForDate(date);
   const analysis = itineraryAnalysis(items);
+  const availabilityWarnings = itineraryAvailabilityWarnings(items, date);
   const routePairs = itineraryRoutePairs(items.map(activityCoordinates));
+  const optimizedSlots = optimizedActivitySlots(
+    items.filter((item) => !item.virtual && item.fixedTime !== true && item.fixedTime !== "true").map(
+      activityCoordinates,
+    ),
+  );
   const conflictIds = new Set(analysis.conflicts.flatMap((item) => [item.first.id, item.second.id]));
   const body = `<div class="planner-layout"><section class="card planner">${
     analysis.sorted.length
@@ -1865,6 +2192,10 @@ function renderItinerary() {
   }${
     analysis.warnings.map((warning) => `<div class="insight warning">${icon("alert")}<div>${esc(warning)}</div></div>`)
       .join("")
+  }${
+    availabilityWarnings.map((warning) =>
+      `<div class="insight warning">${icon("users")}<div>${esc(warning)}</div></div>`
+    ).join("")
   }</div></section>${
     routePairs.length && session.can(PERMISSIONS.TRIP_EDIT)
       ? `<section class="card card-pad"><div class="card-head"><div><h3>Desplazamientos</h3><p>Entre lugares con coordenadas</p></div></div><div class="item-list">${
@@ -1902,6 +2233,10 @@ function renderItinerary() {
       } Calcular trayectos</button>`
       : ""
   }${
+    optimizedSlots.length && session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-secondary" type="button" data-optimize-day>${icon("sync")} Optimizar orden</button>`
+      : ""
+  }${
     session.can(PERMISSIONS.TRIP_EDIT) && items.length
       ? `<button class="btn btn-secondary" type="button" data-duplicate-day>${icon("file")} Duplicar día</button>`
       : ""
@@ -1915,13 +2250,18 @@ function renderItinerary() {
     dates.map((item) => {
       const parsed = new Date(`${item}T12:00`);
       const selected = item === date;
+      const forecast = ui.weather[item];
       return `<button class="day-button ${selected ? "active" : ""} ${
         item === todayIso() ? "today" : ""
       }" data-date="${item}" role="tab" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}"><small>${
         new Intl.DateTimeFormat("es-ES", { weekday: "short" }).format(parsed)
-      }</small><strong>${
-        new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short" }).format(parsed)
-      }</strong></button>`;
+      }</small><strong>${new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short" }).format(parsed)}</strong>${
+        forecast
+          ? `<span class="day-weather" title="${forecast.rainProbability}% de lluvia">${weatherSymbol(forecast.code)} ${
+            Math.round(forecast.maximum)
+          }°</span>`
+          : ""
+      }</button>`;
     }).join("")
   }</div><div class="section-title"><div><h2>${fullDate(date)}</h2><p>Día ${
     dates.indexOf(date) + 1
@@ -1934,6 +2274,34 @@ function renderItinerary() {
       }</section>`
       : ""
   }${body}`;
+}
+
+function itineraryAvailabilityWarnings(items, date) {
+  const availabilityByParticipant = new Map();
+  for (const availability of store.collection("availabilities")) {
+    if (!availabilityByParticipant.has(availability.participantId)) {
+      availabilityByParticipant.set(availability.participantId, []);
+    }
+    availabilityByParticipant.get(availability.participantId).push(availability);
+  }
+  const warnings = [];
+  for (const item of items.filter((candidate) => !candidate.virtual)) {
+    const participants = item.participantIds?.length
+      ? item.participantIds
+      : store.collection("participants").filter((participant) => participant.active).map((participant) =>
+        participant.id
+      );
+    for (const participantId of participants) {
+      const intervals = availabilityByParticipant.get(participantId);
+      if (!intervals?.length) continue;
+      const startsAt = `${date}T${item.start}`;
+      const endsAt = `${date}T${item.end}`;
+      if (!intervals.some((interval) => interval.startAt <= startsAt && interval.endAt >= endsAt)) {
+        warnings.push(`${participantName(participantId)} no está disponible durante “${item.title}”.`);
+      }
+    }
+  }
+  return warnings;
 }
 
 function renderPlaces() {
@@ -2787,6 +3155,7 @@ async function initializeGoogleMap() {
 
 function renderMap() {
   const places = store.collection("places").filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  const activeShares = store.collection("locationShares").filter((share) => Date.parse(share.expiresAt) > Date.now());
   const selected = places.find((p) => p.id === ui.mapPlaceId) || null;
   if (!selected) ui.mapPlaceId = "";
   const orderedPlaces = selected ? [selected, ...places.filter((place) => place.id !== selected.id)] : places;
@@ -2808,13 +3177,55 @@ function renderMap() {
         esc(p.area)
       }</small></span>${icon("chevron")}</button>`
     ).join("") || `<p class="cell-sub">Busca un sitio arriba para añadirlo al viaje.</p>`
-  }</div></aside><button class="map-drawer-backdrop ${
+  }</div>${
+    activeShares.length
+      ? `<div class="map-saved-head"><strong>Ubicaciones temporales</strong><span>${activeShares.length}</span></div><div class="item-list">${
+        activeShares.map((share) =>
+          `<a class="list-item" target="_blank" rel="noreferrer" href="https://www.google.com/maps/search/?api=1&query=${
+            encodeURIComponent(`${share.latitude},${share.longitude}`)
+          }"><span class="stat-icon red">${icon("pin")}</span><span class="list-item-main"><strong>${
+            esc(participantName(share.participantId, "Viajero"))
+          }</strong><small>Hasta ${
+            new Date(share.expiresAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
+          }</small></span></a>`
+        ).join("")
+      }</div>`
+      : ""
+  }</aside><button class="map-drawer-backdrop ${
     ui.mapSidebarOpen ? "open" : ""
   }" type="button" data-map-panel-close aria-label="Cerrar lista de lugares"></button><div class="map-stage"><button class="btn btn-secondary map-panel-toggle" type="button" data-map-panel-toggle aria-expanded="${ui.mapSidebarOpen}">${
     icon("menu")
-  } Lugares (${places.length})</button><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div><div class="map-mobile-selected" data-map-selected ${
+  } Lugares (${places.length})</button><button class="btn btn-primary map-location-share" type="button" data-share-location>${
+    icon("pin")
+  } Compartir 30 min</button><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div><div class="map-mobile-selected" data-map-selected ${
     selected ? "" : "hidden"
   }>${mapSelectedDetails(selected)}</div></div></section>`;
+}
+
+function shareTemporaryLocation() {
+  if (!navigator.geolocation) return toast("Este dispositivo no permite obtener la ubicación.", "error");
+  if (!confirm("Tu ubicación exacta será visible para los miembros de este viaje durante 30 minutos. ¿Continuar?")) {
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    async (position) => {
+      try {
+        await store.add("locationShares", {
+          participantId: currentParticipantId(),
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        toast("Ubicación compartida durante 30 minutos");
+        render();
+      } catch (error) {
+        toast(error.message || "No se pudo compartir la ubicación.", "error");
+      }
+    },
+    () => toast("No se ha podido obtener tu ubicación.", "error"),
+    { enableHighAccuracy: true, timeout: 10000 },
+  );
 }
 
 function toolbar(filters = [], extra = "") {
@@ -2971,6 +3382,24 @@ function duplicateDayDialog() {
   });
 }
 
+async function optimizeCurrentDay() {
+  const activities = store.collection("activities").filter((item) =>
+    item.date === activeDate() && item.fixedTime !== true && item.fixedTime !== "true"
+  ).map(activityCoordinates);
+  const slots = optimizedActivitySlots(activities);
+  if (!slots.length) return toast("Se necesitan al menos tres actividades con ubicación.", "error");
+  const summary = slots.map(({ item, start }) => `${start} · ${item.title}`).join("\n");
+  if (!confirm(`Tabi propone este orden:\n\n${summary}\n\n¿Aplicarlo?`)) return;
+  for (const { item, start, end } of slots) {
+    const original = store.collection("activities").find((activity) => activity.id === item.id);
+    if (original.start !== start || original.end !== end) {
+      await store.edit("activities", item.id, { ...original, start, end });
+    }
+  }
+  toast("Orden optimizado");
+  render();
+}
+
 function duplicateActivityDialog(id) {
   const source = store.collection("activities").find((item) => item.id === id);
   if (!source) return;
@@ -3104,12 +3533,43 @@ function renderTasks() {
       task.status !== "Completada" && task.dueDate && task.dueDate < todayIso()
     ).length;
   return `${
-    toolbar(["Todos", "Pendiente", "Completada", "Alta", "Media", "Baja"], addAction("tasks", "Añadir TODO"))
+    toolbar(
+      ["Todos", "Pendiente", "Completada", "Alta", "Media", "Baja", "Equipaje"],
+      `${
+        session.can(PERMISSIONS.TRIP_EDIT)
+          ? `<button class="btn btn-secondary" type="button" data-task-template>${icon("bag")} Usar plantilla</button>`
+          : ""
+      }${addAction("tasks", "Añadir TODO")}`,
+    )
   }<section class="card card-pad"><div class="card-head"><div><h2>Lista TODO</h2><p>${pending} pendientes${
     overdue ? ` · ${overdue} vencidas` : ""
   }</p></div></div><div class="item-list todo-list">${
     items.map(taskRow).join("") || emptyState("Todo al día", "No hay tareas que coincidan con la búsqueda.")
   }</div></section>`;
+}
+
+function addTaskTemplate() {
+  modal({
+    title: "Añadir lista preparada",
+    fields: [{
+      name: "templateId",
+      label: "Plantilla",
+      type: "select",
+      options: Object.entries(TASK_TEMPLATES).map(([value, item]) => ({ value, label: item.label })),
+      required: true,
+      full: true,
+    }],
+    submitLabel: "Añadir a TODO",
+    onSubmit: async ({ templateId }) => {
+      const existing = new Set(store.collection("tasks").map((task) => searchKey(task.title)));
+      const tasks = templateTasks(templateId, session.currentUser.id).filter((task) =>
+        !existing.has(searchKey(task.title))
+      );
+      for (const task of tasks) await store.add("tasks", task);
+      toast(`${tasks.length} elementos añadidos`);
+      render();
+    },
+  });
 }
 
 function orderedNotes() {
@@ -3122,7 +3582,27 @@ function renderNotes() {
   const notes = orderedNotes().filter((note) =>
     !ui.query || searchKey(`${note.title} ${note.content}`).includes(searchKey(ui.query))
   );
-  return `${toolbar([], addAction("notes", "Añadir nota"))}<div class="note-list">${
+  const journal = store.collection("journalEntries").sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return `${
+    toolbar(
+      [],
+      `${
+        session.can(PERMISSIONS.TRIP_EDIT)
+          ? `<button class="btn btn-secondary" type="button" data-add="journalEntries">${icon("plus")} Diario</button>`
+          : ""
+      }${addAction("notes", "Añadir nota")}`,
+    )
+  }${
+    journal.length
+      ? `<section class="card card-pad"><div class="card-head"><div><h2>Diario del viaje</h2><p>Recuerdos ordenados por fecha</p></div></div><div class="item-list">${
+        journal.map((entry) =>
+          `<article class="list-item"><div class="list-item-main"><strong>${formatDate(entry.date)} · ${
+            esc(entry.title)
+          }</strong><small>${esc(entry.content || "")}</small></div>${actions("journalEntries", entry.id)}</article>`
+        ).join("")
+      }</div></section>`
+      : ""
+  }<div class="note-list">${
     notes.map((note, index) =>
       `<article class="card note-card"><div class="note-order"><span>${
         index + 1
@@ -3172,6 +3652,17 @@ function renderBudget() {
     primaryAmount: canonicalMoneyToPrimary(balance),
   })).filter((balance) => Math.abs(balance.primaryAmount) > 0.000001);
   const transfers = store.collection("settlementTransfers");
+  const participantStats = new Map(
+    store.collection("participants").map((participant) => [participant.id, {
+      paid: store.collection("financialTransactions").filter((entry) =>
+        entry.kind === "paid" && entry.payerParticipantId === participant.id
+      ).reduce((sum, entry) => sum + canonicalMoneyToPrimary(entry.amount, entry), 0),
+      owed: store.collection("expenseSplits").filter((entry) => entry.participantId === participant.id).reduce(
+        (sum, entry) => sum + canonicalMoneyToPrimary(entry.amount),
+        0,
+      ),
+    }]),
+  );
   const expenseItems = store.collection("expenses").map((expense) => ({
     ...expense,
     sourceCollection: "expenses",
@@ -3200,24 +3691,20 @@ function renderBudget() {
   );
   return `<div class="grid dashboard-grid"><div class="section-stack"><section class="card card-pad budget-hero"><div><span class="hero-eyebrow" style="color:var(--muted)">Fondos disponibles</span><div class="stat-value" style="font-size:36px">${
     money(summary.remaining)
-  }</div><p style="color:var(--muted)">de ${primaryMoney(summary.budget)} · base ${
-    primaryMoney(summary.baseBudget)
-  } + aportaciones ${primaryMoney(summary.funded)}</p><div class="legend"><span style="--dot:var(--primary)">Gastado ${
+  }</div><div class="legend"><span style="--dot:var(--primary)">Gastado ${
     primaryMoney(summary.spent)
   }</span><span style="--dot:var(--warning)">Comprometido ${
     primaryMoney(summary.committed)
   }</span></div></div><div class="ring" style="--value:${percent}%"><div class="ring-label">${
     Math.round(percent)
-  }%<small>utilizado</small></div></div></section><div class="grid grid-4">${
-    statCard("wallet", "Fondos aportados", money(summary.funded), `${funds.length} aportaciones`, "", true)
+  }%<small>utilizado</small></div></div></section><div class="grid grid-4 budget-summary-grid">${
+    statCard("wallet", "Fondos aportados", money(summary.funded), "", "", true)
   }${
     statCard(
       "users",
       "Por persona",
       money(summary.perPerson),
-      `Incluye ${primaryMoney(summary.lodgingSpent)} de alojamiento y ${
-        primaryMoney(summary.transportSpent)
-      } de transporte`,
+      "",
       "",
       true,
     )
@@ -3226,14 +3713,12 @@ function renderBudget() {
       "clock",
       "Pendiente de pagar",
       money(summary.committed),
-      `${primaryMoney(summary.lodgingCommitted)} de alojamiento · ${
-        primaryMoney(summary.transportCommitted)
-      } de transporte`,
+      "",
       "amber",
       true,
     )
   }${
-    statCard("bag", "Compras previstas", money(summary.shoppingPlanned), "Aún no compradas", "red", true)
+    statCard("bag", "Compras previstas", money(summary.shoppingPlanned), "", "red", true)
   }</div></div><section class="card card-pad"><div class="card-head"><div><h2>Distribución</h2><p>Gasto real por categoría</p></div></div><div class="chart-bars">${
     totals.map(([l, v]) =>
       `<div class="chart-column"><div class="chart-bar" style="height:${v / max * 100}%" data-value="${
@@ -3245,8 +3730,10 @@ function renderBudget() {
       ? `<section class="card card-pad"><div class="card-head"><div><h2>Saldos entre viajeros</h2><p>Calculados a partir de los gastos repartidos</p></div></div><div class="item-list">${
         balances.map((balance) =>
           `<div class="list-item"><div class="list-item-main"><strong>${
-            esc(memberName(balance.memberUserId, "Viajero"))
-          }</strong><small>${balance.primaryAmount > 0 ? "Debe recibir" : "Debe aportar"}</small></div>${
+            esc(balance.participantName || participantName(balance.participantId, "Viajero"))
+          }</strong><small>${balance.primaryAmount > 0 ? "Debe recibir" : "Debe aportar"} · pagó ${
+            primaryMoney(participantStats.get(balance.participantId)?.paid || 0)
+          } · le correspondían ${primaryMoney(participantStats.get(balance.participantId)?.owed || 0)}</small></div>${
             money(Math.abs(balance.primaryAmount))
           }</div>`
         ).join("")
@@ -3255,14 +3742,40 @@ function renderBudget() {
           ? `<div class="section-title compact"><div><h3>Transferencias sugeridas</h3><p>Liquidan los saldos con pocas operaciones</p></div></div><div class="item-list">${
             transfers.map((transfer) =>
               `<div class="list-item"><div class="list-item-main"><strong>${
-                esc(memberName(transfer.fromUserId, "Viajero"))
-              } → ${esc(memberName(transfer.toUserId, "Viajero"))}</strong><small>Liquidación sugerida</small></div>${
+                esc(participantName(transfer.fromParticipantId, memberName(transfer.fromUserId, "Viajero")))
+              } → ${
+                esc(participantName(transfer.toParticipantId, memberName(transfer.toUserId, "Viajero")))
+              }</strong><small>Liquidación sugerida</small></div>${
                 primaryMoney(moneyToNumber(transfer.amount), transfer.amount.currency)
-              }</div>`
+              }<button class="btn btn-secondary" type="button" data-settle-transfer="${
+                esc(
+                  `${transfer.fromParticipantId}:${transfer.toParticipantId}:${transfer.amount.currency}:${
+                    moneyToNumber(transfer.amount)
+                  }`,
+                )
+              }">Registrar pago</button></div>`
             ).join("")
           }</div>`
           : ""
       }</section>`
+      : ""
+  }${
+    store.collection("settlementPayments").length
+      ? `<section class="card card-pad"><div class="card-head"><div><h2>Pagos registrados</h2><p>Historial de liquidaciones</p></div></div><div class="item-list">${
+        store.collection("settlementPayments").map((payment) =>
+          `<div class="list-item"><div class="list-item-main"><strong>${
+            esc(participantName(payment.fromParticipantId))
+          } → ${esc(participantName(payment.toParticipantId))}</strong><small>${formatDate(payment.paidOn)}${
+            payment.note ? ` · ${esc(payment.note)}` : ""
+          } · ${payment.status === "voided" ? "Anulado" : "Confirmado"}</small></div>${
+            money(moneyToNumber(payment.amount), payment.amount.currency)
+          }${
+            payment.status === "confirmed" && session.can(PERMISSIONS.BUDGET_EDIT)
+              ? `<button class="btn btn-ghost" type="button" data-void-settlement="${payment.id}">Deshacer</button>`
+              : ""
+          }</div>`
+        ).join("")
+      }</div></section>`
       : ""
   }<div class="section-title"><div><h2>Fondos del viaje</h2><p>Aportaciones que aumentan el presupuesto disponible</p></div>${
     session.can(PERMISSIONS.BUDGET_EDIT)
@@ -3288,15 +3801,38 @@ function renderBudget() {
       items.map((i) =>
         `<tr><td><span class="cell-main">${esc(i.title)}</span><span class="cell-sub">${esc(i.category)} · ${
           esc(i.city || "Sin ciudad")
-        }</span></td><td>${formatDate(i.date)}</td><td>${esc(i.paidByName)}</td><td>${
-          itemMoney(i.estimatedAmount, i)
-        }</td><td>${itemMoney(i.actualAmount, i)}</td><td>${badge(i.paymentStatus)}</td><td>${
-          actions(i.sourceCollection, i.id)
-        }</td></tr>`
+        }${i.recurrenceCount > 1 ? ` · Recurrente ${i.recurrenceIndex}/${i.recurrenceCount}` : ""}</span></td><td>${
+          formatDate(i.date)
+        }</td><td>${esc(i.paidByName)}</td><td>${itemMoney(i.estimatedAmount, i)}</td><td>${
+          itemMoney(i.actualAmount, i)
+        }</td><td>${badge(i.paymentStatus)}</td><td>${actions(i.sourceCollection, i.id)}</td></tr>`
       ),
       "No hay movimientos",
     )
   }`;
+}
+
+function openSettlement(prefill = {}) {
+  const options = participantOptions("", true);
+  modal({
+    title: "Registrar pago entre viajeros",
+    fields: [
+      { name: "fromParticipantId", label: "Paga", type: "select", options, required: true },
+      { name: "toParticipantId", label: "Recibe", type: "select", options, required: true },
+      { name: "amount", label: "Importe", type: "number", min: 0.01, step: "0.01", required: true },
+      { name: "currency", label: "Moneda", type: "select", options: MONEY_OPTIONS, required: true },
+      { name: "paidOn", label: "Fecha", type: "date", required: true },
+      { name: "note", label: "Nota", full: true },
+    ],
+    values: { currency: store.activeTrip.currency, paidOn: todayIso(), ...prefill },
+    submitLabel: "Registrar pago",
+    onSubmit: async (values) => {
+      await apiClient.post(`/trips/${store.activeTrip.id}/settlements`, values);
+      await store.loadTrip(store.activeTrip.id, handleRemoteChange);
+      toast("Pago registrado");
+      render();
+    },
+  });
 }
 
 function bookingPlatform(platform = "Otros") {
@@ -3403,7 +3939,15 @@ function renderTransport() {
           copyReferenceButton("transports", i, "reservation")
         }<span class="cell-sub">${esc(i.seat || "")}</span>${
           i.link ? `<a class="cell-link" href="${esc(i.link)}" target="_blank" rel="noreferrer">Abrir reserva</a>` : ""
-        }</td><td>${badge(i.status)}</td><td>${actions("transports", i.id)}</td></tr>`
+        }</td><td>${badge(i.status)}${
+          i.statusUrl
+            ? `<a class="cell-link" href="${esc(i.statusUrl)}" target="_blank" rel="noreferrer">Consultar estado${
+              i.serviceNumber ? ` · ${esc(i.serviceNumber)}` : ""
+            }</a>`
+            : i.serviceNumber
+            ? `<span class="cell-sub">${esc(i.serviceNumber)}</span>`
+            : ""
+        }</td><td>${actions("transports", i.id)}</td></tr>`
       ),
       "No hay transportes",
     )
@@ -3415,7 +3959,13 @@ function renderReservations() {
   return `${
     toolbar(
       ["Todos", "Hotel", "Restaurante", "Museo", "Actividad", "Transporte", "Entrada"],
-      addAction("reservations", "Añadir reserva"),
+      `${
+        session.can(PERMISSIONS.TRIP_EDIT)
+          ? `<button class="btn btn-secondary" type="button" data-import-reservation>${
+            icon("upload")
+          } Importar confirmación</button>`
+          : ""
+      }${addAction("reservations", "Añadir reserva")}`,
     )
   }${
     table(
@@ -3448,6 +3998,43 @@ function reservationLinkLabel(reservation) {
   if (!linked) return "Vínculo no disponible";
   return `Vinculada a ${linked.title || linked.name || `${linked.origin || ""} → ${linked.destination || ""}`}`;
 }
+
+function importReservation() {
+  modal({
+    title: "Importar confirmación",
+    fields: [{
+      name: "confirmation",
+      label: "Correo o texto de confirmación",
+      type: "textarea",
+      full: true,
+      placeholder: "Pega aquí el contenido de la reserva…",
+      help: "Tabi prepara los campos y tú los confirmas antes de guardar.",
+    }, {
+      name: "confirmationFile",
+      label: "O cargar correo",
+      type: "file",
+      accept: ".txt,.eml,text/plain,message/rfc822",
+      full: true,
+      help: "Admite archivos de texto y correos .eml. El contenido se procesa solo en tu navegador.",
+    }],
+    submitLabel: "Revisar datos",
+    onSubmit: ({ confirmation }) => {
+      const parsed = parseReservationText(confirmation);
+      setTimeout(() => openEditor("reservations", null, parsed));
+    },
+    onReady: (root) => {
+      root.querySelector("#field-confirmationFile")?.addEventListener("change", async (event) => {
+        const file = event.currentTarget.files?.[0];
+        if (!file) return;
+        if (file.size > 1_000_000) {
+          event.currentTarget.value = "";
+          return toast("El correo supera 1 MB.", "error");
+        }
+        root.querySelector("#field-confirmation").value = await file.text();
+      });
+    },
+  });
+}
 function renderInspiration() {
   const enriched = store.collection("inspirations").map((item) => ({
     ...item,
@@ -3459,7 +4046,30 @@ function renderInspiration() {
       (ui.inspirationStatus === "Vistos" ? Boolean(item.watched) : !item.watched)
     )
     .reverse();
-  return `<div class="insight inspiration-help" style="margin-bottom:18px">${
+  const proposals = store.collection("proposals");
+  const proposalsPanel =
+    `<section class="card card-pad" style="margin-bottom:18px"><div class="card-head"><div><h2>Propuestas del grupo</h2><p>Decidid juntos antes de añadir un plan</p></div>${
+      session.can(PERMISSIONS.TRIP_EDIT)
+        ? `<button class="btn btn-secondary" type="button" data-add="proposals">${icon("plus")} Proponer</button>`
+        : ""
+    }</div><div class="item-list">${
+      proposals.map((proposal) => {
+        const votes = proposal.votes || {};
+        const counts = ["yes", "maybe", "no"].map((choice) =>
+          Object.values(votes).filter((vote) => vote === choice).length
+        );
+        return `<article class="list-item"><div class="list-item-main"><strong>${esc(proposal.title)}</strong><small>${
+          esc(proposal.description || "Sin detalles")
+        } · 👍 ${counts[0]} · 🤔 ${counts[1]} · 👎 ${counts[2]}</small></div><div class="row-actions">${
+          [["yes", "👍"], ["maybe", "🤔"], ["no", "👎"]].map(([choice, symbol]) =>
+            `<button class="btn btn-ghost icon-btn ${
+              votes[session.currentUser.id] === choice ? "active" : ""
+            }" type="button" data-vote-proposal="${proposal.id}:${choice}" aria-label="Votar ${choice}">${symbol}</button>`
+          ).join("")
+        }${actions("proposals", proposal.id)}</div></article>`;
+      }).join("") || `<p class="cell-sub">Aún no hay propuestas abiertas.</p>`
+    }</div></section>`;
+  return `${proposalsPanel}<div class="insight inspiration-help" style="margin-bottom:18px">${
     icon("play")
   }<div><strong>Guarda ideas desde tus redes</strong>En Android, instala Tabi y utiliza Compartir → Tabi para elegir el viaje. En iOS esta función automática no está disponible: copia el enlace y añádelo manualmente aquí.</div></div>${
     toolbar(
@@ -3600,6 +4210,39 @@ function renderSettings() {
       ? `<button class="btn btn-primary" data-new-invite>${icon("plus")} Crear enlace</button>`
       : ""
   }</div><div class="member-list">${members.map(memberRow).join("")}</div></section>
+      <section class="card card-pad"><div class="card-head"><div><h2>Participantes</h2><p>Incluye acompañantes que no necesitan una cuenta</p></div>${
+    session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-secondary" type="button" data-add-participant>${
+        icon("plus")
+      } Añadir acompañante</button>`
+      : ""
+  }</div><div class="member-list">${store.collection("participants").map(participantRow).join("")}</div></section>
+      <section class="card card-pad"><div class="card-head"><div><h2>Disponibilidad del grupo</h2><p>Llegadas, salidas y planes parciales</p></div>${
+    session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-secondary" type="button" data-add="availabilities">${icon("plus")} Añadir</button>`
+      : ""
+  }</div><div class="item-list">${
+    store.collection("availabilities").map((item) =>
+      `<div class="list-item"><div class="list-item-main"><strong>${
+        esc(participantName(item.participantId))
+      }</strong><small>${formatDate(item.startAt)} ${esc(item.startAt.slice(11, 16))} — ${formatDate(item.endAt)} ${
+        esc(item.endAt.slice(11, 16))
+      }${item.note ? ` · ${esc(item.note)}` : ""}</small></div>${actions("availabilities", item.id)}</div>`
+    ).join("") || `<p class="cell-sub">Todo el grupo participa durante el viaje completo.</p>`
+  }</div></section>
+      <section class="card card-pad"><div class="card-head"><div><h2>Información de emergencia</h2><p>Disponible también en la copia offline del viaje</p></div>${
+    session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-secondary" type="button" data-add="emergencyContacts">${icon("plus")} Añadir</button>`
+      : ""
+  }</div><div class="item-list">${
+    store.collection("emergencyContacts").map((item) =>
+      `<div class="list-item"><div class="list-item-main"><strong>${esc(item.name)}</strong><small>${
+        esc(item.details || "")
+      }</small></div><a class="btn btn-secondary" href="tel:${esc(item.phone)}">${esc(item.phone)}</a>${
+        actions("emergencyContacts", item.id)
+      }</div>`
+    ).join("") || `<p class="cell-sub">No hay contactos de emergencia guardados.</p>`
+  }</div></section>
       ${
     session.can(PERMISSIONS.MEMBER_INVITE)
       ? `<section class="card card-pad"><div class="card-head"><div><h2>Invitaciones</h2><p>Enlaces activos y anteriores</p></div></div><div class="item-list">${
@@ -3673,6 +4316,53 @@ function memberRow(member) {
   }</div>`;
 }
 
+function participantRow(participant) {
+  return `<div class="member-row ${participant.active ? "" : "is-muted"}"><span class="avatar">${
+    esc(participant.name.slice(0, 2).toUpperCase())
+  }</span><div><strong>${esc(participant.name)}</strong><small>${
+    participant.kind === "member" ? "Miembro con cuenta" : "Acompañante sin cuenta"
+  }${participant.active ? "" : " · inactivo"}</small></div>${
+    participant.kind === "guest" && session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-ghost" type="button" data-edit-participant="${participant.id}">${
+        icon("edit")
+      } Editar</button>`
+      : ""
+  }</div>`;
+}
+
+function openParticipantEditor(participant = null) {
+  modal({
+    title: participant ? "Editar acompañante" : "Añadir acompañante",
+    fields: [{ name: "name", label: "Nombre", required: true, full: true }],
+    values: participant || {},
+    dangerLabel: participant?.active ? "Desactivar" : "",
+    onSubmit: async (values) => {
+      const result = participant
+        ? await apiClient.patch(`/trips/${store.activeTrip.id}/participants/${participant.id}`, {
+          name: values.name,
+          active: true,
+          version: participant.version,
+        })
+        : await apiClient.post(`/trips/${store.activeTrip.id}/participants`, values);
+      if (participant) Object.assign(participant, result.participant);
+      else store.getState().participants.push(result.participant);
+      await store.persistCurrentTrip();
+      render();
+    },
+    onDanger: participant
+      ? async () => {
+        await apiClient.delete(`/trips/${store.activeTrip.id}/participants/${participant.id}`, {
+          version: participant.version,
+        });
+        participant.active = false;
+        participant.version += 1;
+        await store.persistCurrentTrip();
+        render();
+      }
+      : null,
+  });
+}
+
 function invitationRow(invitation) {
   const savedToken = savedInvitationTokens()[invitation.id];
   return `<div class="list-item"><span class="stat-icon ${invitation.status === "active" ? "" : "amber"}">${
@@ -3720,7 +4410,7 @@ function renderMore() {
   }</div>`;
 }
 
-function openEditor(collection, idValue) {
+function openEditor(collection, idValue, seed = {}) {
   const required = collection === "expenses" || collection === "funds"
     ? PERMISSIONS.BUDGET_EDIT
     : PERMISSIONS.TRIP_EDIT;
@@ -3740,6 +4430,10 @@ function openEditor(collection, idValue) {
     transports: ["transport", "Transporte"],
     reservations: ["reservation", "Reserva"],
     inspirations: ["inspiration", "Inspiración"],
+    proposals: ["proposal", "Propuesta"],
+    availabilities: ["availability", "Disponibilidad"],
+    journalEntries: ["journal", "Entrada del diario"],
+    emergencyContacts: ["emergency", "Contacto de emergencia"],
   }[collection];
   if (!config) return;
   const item = idValue ? store.collection(collection).find((i) => i.id === idValue) : null;
@@ -3755,6 +4449,7 @@ function openEditor(collection, idValue) {
       start: "09:00",
       end: "10:00",
       status: "planned",
+      fixedTime: "false",
       timeZone: store.activeTrip.timeZone || "UTC",
     },
     place: {
@@ -3772,7 +4467,11 @@ function openEditor(collection, idValue) {
       date: todayIso(),
       currency: store.activeTrip.currency,
       paymentStatus: "Pendiente",
-      paidByUserId: session.currentUser.id,
+      paidByParticipantId: currentParticipantId(),
+      splitMode: "personal",
+      splitParticipantIds: [currentParticipantId()].filter(Boolean),
+      repeatCount: 1,
+      repeatEveryDays: 1,
     },
     fund: {
       title: "Aportación",
@@ -3810,10 +4509,18 @@ function openEditor(collection, idValue) {
       timeZone: store.activeTrip.timeZone || "UTC",
     },
     inspiration: {},
+    proposal: { status: "Abierta", votes: {} },
+    availability: {
+      participantId: currentParticipantId(),
+      startAt: `${activeDate()}T08:00`,
+      endAt: `${activeDate()}T22:00`,
+    },
+    journal: { date: activeDate() },
+    emergency: {},
   }[type] || {};
   let editorValues = item && type === "activity" && !item.activityKind
     ? { ...item, activityKind: activityKindOf(item) }
-    : item || defaults;
+    : item || { ...defaults, ...seed };
   if (type === "activity" && !editorValues.timeZone) {
     editorValues = { ...editorValues, timeZone: store.activeTrip.timeZone || "UTC" };
   }
@@ -3821,9 +4528,24 @@ function openEditor(collection, idValue) {
     editorValues = { ...editorValues, linkedEntity: `${editorValues.linkedCollection}:${editorValues.linkedEntityId}` };
   }
   if (type === "expense") {
+    const existingSplits = editorValues.splits || [];
     editorValues = {
       ...editorValues,
-      splitMemberIds: (editorValues.splits || []).map((split) => split.memberUserId).filter(Boolean),
+      paidByParticipantId: editorValues.paidByParticipantId || store.collection("participants").find((participant) =>
+        participant.userId === editorValues.paidByUserId
+      )?.id || "",
+      splitMode: editorValues.splitMode || (existingSplits.length > 1 ? "equal" : "personal"),
+      splitParticipantIds: existingSplits.map((split) =>
+        split.participantId ||
+        store.collection("participants").find((participant) => participant.userId === split.memberUserId)?.id
+      ).filter(Boolean),
+      ...Object.fromEntries(existingSplits.map((split) => [
+        `splitValue_${split.participantId || ""}`,
+        split.percentage ?? split.weight ??
+          (split.amountMinor !== undefined
+            ? minorToDecimal(split.amountMinor, editorValues.currency || store.activeTrip.currency)
+            : ""),
+      ])),
     };
   }
   modal({
@@ -3840,8 +4562,31 @@ function openEditor(collection, idValue) {
         delete values.linkedEntity;
       }
       if (type === "expense") {
-        values.splits = (values.splitMemberIds || []).map((memberUserId) => ({ memberUserId, weight: 1 }));
-        delete values.splitMemberIds;
+        const selected = values.splitParticipantIds || [];
+        if (!selected.length) throw new Error("Selecciona al menos una persona para repartir el gasto.");
+        if (values.splitMode === "personal" && selected.length !== 1) {
+          throw new Error("Un gasto personal debe pertenecer a una sola persona.");
+        }
+        const currency = values.currency || store.activeTrip.currency;
+        values.splits = selected.map((participantId) => {
+          const rawValue = String(values[`splitValue_${participantId}`] || "0");
+          const raw = Number(rawValue);
+          if (values.splitMode === "amount") {
+            return { participantId, amountMinor: decimalToMinor(rawValue, currency) };
+          }
+          if (values.splitMode === "percentage") return { participantId, percentage: raw, weight: raw };
+          if (values.splitMode === "shares") return { participantId, weight: raw };
+          return { participantId, weight: 1 };
+        });
+        if (["percentage", "shares"].includes(values.splitMode) && values.splits.some((split) => split.weight <= 0)) {
+          throw new Error("Todos los valores del reparto deben ser mayores que cero.");
+        }
+        if (values.splitMode === "percentage") {
+          const totalPercentage = values.splits.reduce((sum, split) => sum + split.percentage, 0);
+          if (Math.abs(totalPercentage - 100) > 0.001) throw new Error("Los porcentajes deben sumar 100 %.");
+        }
+        for (const participant of store.collection("participants")) delete values[`splitValue_${participant.id}`];
+        delete values.splitParticipantIds;
       }
       if (type === "purchase" && Number(values.actualPrice || 0) > 0) {
         values.status = "Comprado";
@@ -3896,8 +4641,24 @@ function openEditor(collection, idValue) {
         else values.paymentStatus = "Pendiente";
       }
       if (type === "note" && !item) values.order = defaults.order;
+      const repeatCount = type === "expense" && !item ? Math.min(60, Math.max(1, Number(values.repeatCount || 1))) : 1;
+      const repeatEveryDays = Math.max(1, Number(values.repeatEveryDays || 1));
+      const recurrenceGroupId = repeatCount > 1 ? crypto.randomUUID() : "";
+      delete values.repeatCount;
+      delete values.repeatEveryDays;
       try {
-        item ? await store.edit(collection, item.id, values) : await store.add(collection, values);
+        if (item) await store.edit(collection, item.id, values);
+        else {
+          for (let index = 0; index < repeatCount; index++) {
+            await store.add(collection, {
+              ...values,
+              date: values.date && index ? addDaysIso(values.date, index * repeatEveryDays) : values.date,
+              recurrenceGroupId,
+              recurrenceIndex: index + 1,
+              recurrenceCount: repeatCount,
+            });
+          }
+        }
       } catch (error) {
         if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
           document.querySelector("#modal-root").innerHTML = "";
@@ -3918,6 +4679,8 @@ function openEditor(collection, idValue) {
       ? initializePurchaseFields
       : type === "transport"
       ? initializeTransportFields
+      : type === "expense"
+      ? initializeExpenseFields
       : undefined,
     onDanger: item
       ? async () => {
@@ -3931,6 +4694,84 @@ function openEditor(collection, idValue) {
 
 function bindCommon() {
   initializeImageLightbox(app);
+  app.querySelector("[data-share-location]")?.addEventListener("click", shareTemporaryLocation);
+  app.querySelectorAll("[data-restore-log]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      if (!confirm("¿Restaurar esta versión como un cambio nuevo?")) return;
+      await apiClient.post(`/trips/${store.activeTrip.id}/history/${button.dataset.restoreLog}`, {});
+      await store.loadTrip(store.activeTrip.id, handleRemoteChange);
+      toast("Versión restaurada");
+      render();
+    })
+  );
+  const globalSearch = app.querySelector("[data-global-search]");
+  globalSearch?.addEventListener("input", () => {
+    ui.globalQuery = globalSearch.value;
+    render();
+    app.querySelector("[data-global-search]")?.focus();
+  });
+  app.querySelectorAll("[data-search-result]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const [route, collection, id] = button.dataset.searchResult.split(":");
+      ui.route = route;
+      location.hash = route;
+      render();
+      if (session.can(collection === "expenses" ? PERMISSIONS.BUDGET_EDIT : PERMISSIONS.TRIP_EDIT)) {
+        openEditor(collection, id);
+      }
+    })
+  );
+  app.querySelector("[data-task-template]")?.addEventListener("click", addTaskTemplate);
+  app.querySelector("[data-optimize-day]")?.addEventListener("click", optimizeCurrentDay);
+  app.querySelector("[data-import-reservation]")?.addEventListener("click", importReservation);
+  app.querySelectorAll("[data-vote-proposal]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      const [id, choice] = button.dataset.voteProposal.split(":");
+      const proposal = store.collection("proposals").find((item) => item.id === id);
+      if (!proposal) return;
+      const result = await apiClient.post(`/trips/${store.activeTrip.id}/proposals/${id}/vote`, { choice });
+      const index = store.state.proposals.findIndex((item) => item.id === id);
+      if (index >= 0) store.state.proposals[index] = result.item;
+      await store.persistCurrentTrip();
+      toast("Voto guardado");
+      render();
+    })
+  );
+  app.querySelector("[data-read-notifications]")?.addEventListener("click", async () => {
+    const unread = store.collection("notifications").filter((item) => !item.read);
+    await apiClient.post(`/trips/${store.activeTrip.id}/notifications`, { ids: unread.map((item) => item.id) });
+    unread.forEach((item) => item.read = true);
+    render();
+  });
+  app.querySelector("[data-add-participant]")?.addEventListener("click", () => openParticipantEditor());
+  app.querySelectorAll("[data-edit-participant]").forEach((button) =>
+    button.addEventListener(
+      "click",
+      () =>
+        openParticipantEditor(
+          store.collection("participants").find((item) => item.id === button.dataset.editParticipant),
+        ),
+    )
+  );
+  app.querySelectorAll("[data-settle-transfer]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const [fromParticipantId, toParticipantId, currency, amount] = button.dataset.settleTransfer.split(":");
+      openSettlement({ fromParticipantId, toParticipantId, currency, amount: Number(amount) });
+    })
+  );
+  app.querySelectorAll("[data-void-settlement]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      const payment = store.collection("settlementPayments").find((item) => item.id === button.dataset.voidSettlement);
+      if (!payment || !confirm("¿Deshacer esta liquidación? El gasto original no se modificará.")) return;
+      await apiClient.patch(`/trips/${store.activeTrip.id}/settlements/${payment.id}`, {
+        version: payment.version,
+        status: "voided",
+      });
+      await store.loadTrip(store.activeTrip.id, handleRemoteChange);
+      toast("Liquidación anulada");
+      render();
+    })
+  );
   app.querySelectorAll(".place-cover-photo").forEach((image) =>
     image.addEventListener("error", () => {
       const cover = image.closest(".place-cover");
@@ -4715,6 +5556,16 @@ for (const eventName of ["online", "offline"]) {
     if (session.currentTrip) render();
   });
 }
+
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "k" && session.currentTrip) {
+    event.preventDefault();
+    ui.route = "search";
+    location.hash = "search";
+    render();
+    app.querySelector("[data-global-search]")?.focus();
+  }
+});
 const pwaInitialization = pwaManager.initialize().catch(() => {});
 applyTheme();
 await start();

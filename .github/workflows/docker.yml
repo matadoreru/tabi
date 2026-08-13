@@ -48,13 +48,13 @@ jobs:
           deno-version: 2.9.4
 
       - name: Check formatting
-        run: deno fmt --check
+        run: deno task format:check
 
       - name: Lint
-        run: deno lint
+        run: deno task lint
 
       - name: Type and module check
-        run: deno check server.js src/app.js
+        run: deno task check
 
       - name: Test
         run: deno task test
