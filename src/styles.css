@@ -1621,6 +1621,49 @@ textarea {
   top: 16px;
   right: 16px;
 }
+
+.map-export-tools {
+  position: absolute;
+  z-index: 12;
+  top: 18px;
+  left: 18px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.map-export-tools > * {
+  pointer-events: auto;
+}
+
+.map-export-region {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+
+.map-export-region span {
+  color: var(--text-muted);
+  font-size: .78rem;
+  font-weight: 700;
+}
+
+.map-export-region select {
+  min-width: 130px;
+  max-width: 190px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 10px;
+}
 .is-muted {
   opacity: .58;
 }
@@ -2770,6 +2813,23 @@ textarea {
   .map-location-share .icon {
     width: 20px;
     height: 20px;
+  }
+  .map-export-tools {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+  }
+  .map-export-region {
+    margin-top: 58px;
+    margin-left: auto;
+    max-width: calc(100vw - 24px);
+  }
+  .map-export-region span {
+    display: none;
+  }
+  .map-export-region select {
+    min-width: 0;
+    width: min(35vw, 150px);
   }
   .map-drawer-backdrop {
     display: block;

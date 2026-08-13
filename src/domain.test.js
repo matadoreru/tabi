@@ -76,6 +76,10 @@ Deno.test("identifica el mismo lugar de Maps aunque cambien parámetros de idiom
 });
 Deno.test("reconoce enlaces de inspiración compatibles", () => {
   assertEquals(inspirationLink("https://www.tiktok.com/@tabi/video/123")?.platform, "TikTok");
+  assertEquals(
+    inspirationLink("https://www.tiktok.com/@ryux_99/video/7673144647790628118")?.url,
+    "https://www.tiktok.com/@ryux_99/video/7673144647790628118",
+  );
   assertEquals(inspirationLink("https://www.instagram.com/reel/ABC123/")?.platform, "Instagram");
   assertEquals(inspirationLink("https://youtube.com/shorts/ABC123")?.platform, "YouTube");
   assertEquals(inspirationLink("https://example.com/video"), null);

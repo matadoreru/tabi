@@ -70,6 +70,7 @@ const ui = {
   mapPlaceId: "",
   mapSidebarOpen: false,
   mapSavedQuery: "",
+  mapExportRegion: "country",
   filter: "Todos",
   authMode: "login",
   inspirationStatus: "Todos",
@@ -2450,6 +2451,114 @@ function mapInfoContent(place) {
   return content;
 }
 
+function mapExportRegions(places) {
+  const regions = [{ value: "country", label: store.activeTrip?.country || "Todo el viaje" }];
+  const cities = [...new Set(places.map((place) => String(place.city || "").trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, "es")
+  );
+  const areas = [...new Set(places.map((place) => String(place.area || "").trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, "es")
+  );
+  regions.push(...cities.map((city) => ({ value: `city:${city}`, label: city })));
+  regions.push(...areas.map((area) => ({ value: `area:${area}`, label: `Zona · ${area}` })));
+  return regions;
+}
+
+function placesForMapExport(places, region) {
+  if (!region || region === "country") return places;
+  const [kind, value] = region.split(":");
+  return places.filter((place) => searchKey(place[kind] || "") === searchKey(value));
+}
+
+function exportPlacesMap() {
+  const allPlaces = store.collection("places").filter((place) =>
+    String(place.lat ?? "").trim() !== "" && String(place.lng ?? "").trim() !== "" &&
+    Number.isFinite(Number(place.lat)) && Number.isFinite(Number(place.lng))
+  );
+  const selected = placesForMapExport(allPlaces, ui.mapExportRegion);
+  if (!selected.length) return toast("No hay lugares con coordenadas en esta región.", "error");
+  const canvas = document.createElement("canvas");
+  canvas.width = 1800;
+  canvas.height = 1100;
+  const context = canvas.getContext("2d");
+  const padding = 110;
+  const minLat = Math.min(...selected.map((place) => Number(place.lat)));
+  const maxLat = Math.max(...selected.map((place) => Number(place.lat)));
+  const minLng = Math.min(...selected.map((place) => Number(place.lng)));
+  const maxLng = Math.max(...selected.map((place) => Number(place.lng)));
+  const latSpan = Math.max(maxLat - minLat, 0.08);
+  const lngSpan = Math.max(maxLng - minLng, 0.08);
+  const region = mapExportRegions(allPlaces).find((option) => option.value === ui.mapExportRegion)?.label ||
+    "Todo el viaje";
+  const title = store.activeTrip?.name || "Lugares del viaje";
+  const safeName = title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").toLocaleLowerCase() || "tabi";
+  context.fillStyle = "#f4f1e8";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#173f48";
+  context.fillRect(0, 0, canvas.width, 190);
+  context.fillStyle = "#fffaf4";
+  context.font = "700 48px system-ui, sans-serif";
+  context.fillText(title, padding, 82);
+  context.font = "28px system-ui, sans-serif";
+  context.fillText(`${region} · ${selected.length} ${selected.length === 1 ? "lugar" : "lugares"}`, padding, 136);
+  const left = padding;
+  const top = 260;
+  const width = canvas.width - padding * 2;
+  const height = 690;
+  context.fillStyle = "#dbe9e4";
+  context.fillRect(left, top, width, height);
+  context.strokeStyle = "rgba(23,63,72,.16)";
+  context.lineWidth = 2;
+  for (let step = 0; step <= 10; step++) {
+    const x = left + width * step / 10;
+    const y = top + height * step / 10;
+    context.beginPath();
+    context.moveTo(x, top);
+    context.lineTo(x, top + height);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(left, y);
+    context.lineTo(left + width, y);
+    context.stroke();
+  }
+  context.fillStyle = "#527f78";
+  context.font = "22px system-ui, sans-serif";
+  context.fillText(`${maxLat.toFixed(2)}° N`, left, top - 18);
+  context.fillText(`${minLat.toFixed(2)}° N`, left, top + height + 40);
+  context.textAlign = "right";
+  context.fillText(`${minLng.toFixed(2)}°`, left + width, top + height + 40);
+  context.textAlign = "left";
+  selected.forEach((place, index) => {
+    const x = left + ((Number(place.lng) - minLng) / lngSpan) * width;
+    const y = top + (1 - (Number(place.lat) - minLat) / latSpan) * height;
+    context.beginPath();
+    context.arc(x, y, 17, 0, Math.PI * 2);
+    context.fillStyle = "#e5484d";
+    context.fill();
+    context.lineWidth = 5;
+    context.strokeStyle = "#fffaf4";
+    context.stroke();
+    context.fillStyle = "#173f48";
+    context.font = "600 25px system-ui, sans-serif";
+    const label = `${index + 1}. ${place.name || "Lugar"}`;
+    context.fillText(
+      label.length > 34 ? `${label.slice(0, 31)}…` : label,
+      Math.min(x + 28, left + width - 360),
+      Math.max(top + 30, y - 24),
+    );
+  });
+  context.fillStyle = "#527f78";
+  context.font = "24px system-ui, sans-serif";
+  context.fillText("Mapa de lugares guardados · Tabi", padding, 1030);
+  const link = document.createElement("a");
+  link.download = `${safeName}-lugares-${searchKey(region).replace(/[^\p{L}\p{N}]+/gu, "-") || "viaje"}.png`;
+  link.href = canvas.toDataURL("image/png");
+  document.body.append(link);
+  link.click();
+  link.remove();
+  toast("Mapa exportado en PNG");
+}
+
 function setMapSidebarOpen(open) {
   ui.mapSidebarOpen = open;
   document.querySelector(".map-sidebar")?.classList.toggle("open", open);
@@ -3077,6 +3186,7 @@ function renderMap() {
       ].filter(Boolean).join(" "),
     ).includes(savedQuery);
   const visiblePlaces = orderedPlaces.filter(matchesSavedQuery);
+  const exportRegions = mapExportRegions(places);
   return `<section class="card map-layout"><aside class="map-sidebar ${
     ui.mapSidebarOpen ? "open" : ""
   }"><div class="map-sidebar-head"><strong>Explorar lugares</strong><button class="btn btn-ghost icon-btn" type="button" data-map-panel-close aria-label="Cerrar lista">${
@@ -3127,9 +3237,17 @@ function renderMap() {
       : ""
   }</aside><button class="map-drawer-backdrop ${
     ui.mapSidebarOpen ? "open" : ""
-  }" type="button" data-map-panel-close aria-label="Cerrar lista de lugares"></button><div class="map-stage"><button class="btn btn-secondary map-panel-toggle" type="button" data-map-panel-toggle aria-expanded="${ui.mapSidebarOpen}">${
+  }" type="button" data-map-panel-close aria-label="Cerrar lista de lugares"></button><div class="map-stage"><div class="map-export-tools"><button class="btn btn-secondary map-panel-toggle" type="button" data-map-panel-toggle aria-expanded="${ui.mapSidebarOpen}">${
     icon("menu")
-  } Lugares (${places.length})</button><button class="btn btn-primary map-location-share" type="button" data-share-location aria-label="Compartir ubicación durante 30 minutos" title="Compartir ubicación durante 30 minutos">${
+  } Lugares (${places.length})</button><label class="map-export-region"><span>Exportar región</span><select data-map-export-region aria-label="Región del mapa">${
+    exportRegions.map((option) =>
+      `<option value="${esc(option.value)}" ${option.value === ui.mapExportRegion ? "selected" : ""}>${
+        esc(option.label)
+      }</option>`
+    ).join("")
+  }</select><button class="btn btn-primary" type="button" data-export-map>${
+    icon("download")
+  } PNG</button></label></div><button class="btn btn-primary map-location-share" type="button" data-share-location aria-label="Compartir ubicación durante 30 minutos" title="Compartir ubicación durante 30 minutos">${
     icon("pin")
   } <span>Compartir 30 min</span></button><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div><div class="map-mobile-selected" data-map-selected ${
     selected ? "" : "hidden"
@@ -4586,10 +4704,14 @@ function openEditor(collection, idValue, seed = {}) {
           for (let index = 0; index < repeatCount; index++) {
             await store.add(collection, {
               ...values,
-              date: values.date && index ? addDaysIso(values.date, index * repeatEveryDays) : values.date,
-              recurrenceGroupId,
-              recurrenceIndex: index + 1,
-              recurrenceCount: repeatCount,
+              ...(type === "expense"
+                ? {
+                  date: values.date && index ? addDaysIso(values.date, index * repeatEveryDays) : values.date,
+                  recurrenceGroupId,
+                  recurrenceIndex: index + 1,
+                  recurrenceCount: repeatCount,
+                }
+                : {}),
             });
           }
         }
@@ -4629,6 +4751,10 @@ function openEditor(collection, idValue, seed = {}) {
 function bindCommon() {
   initializeImageLightbox(app);
   app.querySelector("[data-share-location]")?.addEventListener("click", shareTemporaryLocation);
+  app.querySelector("[data-export-map]")?.addEventListener("click", exportPlacesMap);
+  app.querySelector("[data-map-export-region]")?.addEventListener("change", (event) => {
+    ui.mapExportRegion = event.target.value;
+  });
   app.querySelectorAll("[data-restore-log]").forEach((button) =>
     button.addEventListener("click", async () => {
       if (!confirm("¿Restaurar esta versión como un cambio nuevo?")) return;

@@ -19,6 +19,18 @@ Deno.test("la PWA se registra como destino para enlaces compartidos", async () =
   assertEquals(manifest.share_target.method, "GET");
   assertEquals(manifest.share_target.params.url, "url");
   assertEquals(manifest.share_target.params.text, "text");
+  for (const size of ["192x192", "512x512"]) {
+    if (!manifest.icons.some((icon) => icon.type === "image/png" && icon.sizes === size)) {
+      throw new Error(`Falta el icono PNG ${size} requerido para integrar la PWA en Android`);
+    }
+  }
+});
+
+Deno.test("solo los gastos reciben metadatos de repetición al crearse", async () => {
+  const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (!app.includes('...(type === "expense"')) {
+    throw new Error("Los formularios no deben enviar campos de repetición a Inspiración");
+  }
 });
 
 Deno.test("normaliza búsquedas sin distinguir mayúsculas ni tildes", () => {
@@ -94,6 +106,9 @@ Deno.test("el mapa muestra el detalle antes de la lista y permite limpiar la sel
   }
   if (!mapView.includes("data-map-saved-search") || !source.includes("data-map-saved-key")) {
     throw new Error("El mapa debe permitir buscar exclusivamente entre los sitios guardados");
+  }
+  if (!mapView.includes("data-map-export-region") || !source.includes("function exportPlacesMap")) {
+    throw new Error("El mapa debe permitir exportar los lugares por región");
   }
 });
 

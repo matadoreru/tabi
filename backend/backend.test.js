@@ -268,6 +268,17 @@ Deno.test({
       owner.cookie,
     );
     assertEquals(invalidInspiration.status, 422);
+    const tiktokInspiration = await call(
+      "POST",
+      `/api/trips/${tripId}/inspirations`,
+      { url: "https://www.tiktok.com/@ryux_99/video/7673144647790628118" },
+      owner.cookie,
+    );
+    assertEquals(tiktokInspiration.status, 201);
+    assertEquals(
+      tiktokInspiration.data.item.url,
+      "https://www.tiktok.com/@ryux_99/video/7673144647790628118",
+    );
     const fund = await call("POST", `/api/trips/${tripId}/funds`, {
       title: "Fondo inicial",
       contributor: "Hortensi",

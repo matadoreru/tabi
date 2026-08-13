@@ -1,10 +1,12 @@
-const CACHE = "tabi-v17";
+const CACHE = "tabi-v18";
 const PRIVATE_CACHE = "tabi-private-v1";
 const ASSETS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
   "./assets/icon.svg",
+  "./assets/icon-192.png",
+  "./assets/icon-512.png",
   "./src/styles.css",
   "./src/app.js",
   "./src/backgrounds.js",
