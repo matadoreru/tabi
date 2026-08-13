@@ -90,6 +90,12 @@ async function syncExpenseSplits(tripId, collection, item, tripCurrency, timesta
           split.memberUserId,
         ))?.id
         : null);
+    const participant = participantId
+      ? await db.prepare("SELECT user_id,name FROM trip_participants WHERE id=? AND trip_id=?").get(
+        participantId,
+        tripId,
+      )
+      : null;
     await db.prepare(
       `INSERT INTO expense_splits(
         id,trip_id,source_collection,source_id,member_user_id,participant_id,participant_name,amount_minor,currency,created_at,updated_at
@@ -99,9 +105,9 @@ async function syncExpenseSplits(tripId, collection, item, tripCurrency, timesta
       tripId,
       collection,
       item.id,
-      split.memberUserId || null,
+      split.memberUserId || participant?.user_id || null,
       participantId,
-      String(split.participantName || ""),
+      String(split.participantName || participant?.name || ""),
       amounts[index].minorUnits,
       total.currency,
       timestamp,

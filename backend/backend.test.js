@@ -384,7 +384,7 @@ Deno.test({
         { participantId: guest.data.participant.id, amountMinor: "300" },
       ],
     }, owner.cookie);
-    assertEquals(exactExpense.status, 201);
+    assertEquals(exactExpense.status, 201, JSON.stringify(exactExpense.data));
     assertEquals(exactExpense.data.expenseSplits.length, 3);
     assertEquals(
       exactExpense.data.expenseSplits.reduce((sum, split) => sum + Number(split.amount.minorUnits), 0),

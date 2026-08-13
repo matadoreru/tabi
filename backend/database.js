@@ -450,6 +450,12 @@ const migrations = [
   `).join("\n")
   }
   `,
+  `
+  ALTER TABLE expense_splits DROP CONSTRAINT IF EXISTS expense_splits_check;
+  ALTER TABLE expense_splits DROP CONSTRAINT IF EXISTS expense_splits_identity_check;
+  ALTER TABLE expense_splits ADD CONSTRAINT expense_splits_identity_check
+    CHECK(member_user_id IS NOT NULL OR participant_id IS NOT NULL OR participant_name <> '');
+  `,
 ];
 
 async function migrate() {
