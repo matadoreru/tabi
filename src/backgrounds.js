@@ -8,11 +8,17 @@ export const PLACE_BACKGROUND_MODES = Object.freeze({
 const VALID_MODES = new Set(Object.values(PLACE_BACKGROUND_MODES));
 const SAFE_COLOR = /^(?:#[\da-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%/-]+\))$/i;
 
+export function automaticPlacePhotoUrl(place = {}) {
+  const photoName = String(place.googlePhotoName || "").trim();
+  if (photoName) return `/api/maps/photo?name=${encodeURIComponent(photoName)}`;
+  return String(place.photoUrl || "");
+}
+
 export function normalizePlaceAppearance(place = {}) {
   const requestedMode = String(place.backgroundMode || "").toLowerCase();
   return {
     mode: VALID_MODES.has(requestedMode) ? requestedMode : PLACE_BACKGROUND_MODES.AUTO,
-    automaticImage: String(place.photoUrl || ""),
+    automaticImage: automaticPlacePhotoUrl(place),
     customImage: String(place.backgroundImage || ""),
     color: SAFE_COLOR.test(String(place.backgroundColor || "")) ? String(place.backgroundColor) : "",
     emoji: String(place.backgroundEmoji || ""),

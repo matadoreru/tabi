@@ -1,6 +1,7 @@
 import { HttpError } from "./http.js";
 
 const SHORT_HOST = "maps.app.goo.gl";
+const GOOGLE_PHOTO_NAME = /^places\/[^/?#\s]+\/photos\/[^/?#\s]+$/;
 
 export function googleMapsUrl(value) {
   if (String(value || "").length > 2048) return null;
@@ -43,4 +44,48 @@ export async function resolveGoogleMapsUrl(value, fetcher = fetch) {
     throw new HttpError(422, "INVALID_MAPS_URL", "El enlace de Google Maps contiene demasiadas redirecciones.");
   }
   return url.href;
+}
+
+export async function googlePlacePhotoResponse(name, apiKey, fetcher = fetch) {
+  const photoName = String(name || "").trim();
+  if (!GOOGLE_PHOTO_NAME.test(photoName)) {
+    throw new HttpError(422, "INVALID_PLACE_PHOTO", "La referencia de la foto de Google Maps no es válida.");
+  }
+  if (!apiKey) throw new HttpError(503, "MAPS_UNAVAILABLE", "Google Maps no está configurado.");
+  const url = new URL(`https://places.googleapis.com/v1/${photoName}/media`);
+  url.searchParams.set("maxWidthPx", "1200");
+  url.searchParams.set("maxHeightPx", "720");
+  url.searchParams.set("skipHttpRedirect", "true");
+  url.searchParams.set("key", apiKey);
+  let upstream;
+  try {
+    upstream = await fetcher(url, { signal: AbortSignal.timeout(10_000) });
+  } catch {
+    throw new HttpError(502, "PLACE_PHOTO_UNAVAILABLE", "No se ha podido descargar la foto de Google Maps.");
+  }
+  let payload;
+  try {
+    payload = upstream.ok ? await upstream.json() : null;
+  } catch {
+    payload = null;
+  }
+  let photoUri;
+  try {
+    photoUri = new URL(payload?.photoUri);
+  } catch {
+    photoUri = null;
+  }
+  if (
+    !photoUri || photoUri.protocol !== "https:" ||
+    !(photoUri.hostname === "googleusercontent.com" || photoUri.hostname.endsWith(".googleusercontent.com"))
+  ) {
+    throw new HttpError(502, "PLACE_PHOTO_UNAVAILABLE", "Google Maps no ha devuelto una imagen válida.");
+  }
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: photoUri.href,
+      "cache-control": "private, no-store",
+    },
+  });
 }

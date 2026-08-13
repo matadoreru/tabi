@@ -7,7 +7,7 @@ import { CONFIG, ENTITY_TABLES } from "./config.js";
 import { body, HttpError, json, newId, now, validateMutationOrigin } from "./http.js";
 import { eventStream, publish } from "./events.js";
 import { getExchangeRate } from "./exchange-rates.js";
-import { googleMapsUrl, resolveGoogleMapsUrl } from "./google-maps.js";
+import { googleMapsUrl, googlePlacePhotoResponse, resolveGoogleMapsUrl } from "./google-maps.js";
 import { ensureFinancialProjection, financialState, removeFinancialSource, syncFinancialSource } from "./finance.js";
 import { extractMediaAssets, mediaResponse, removeOwnedMedia } from "./media.js";
 import { PERMISSIONS, permissionsForRole } from "../src/permissions.js";
@@ -90,6 +90,9 @@ export async function api(request, pathname) {
   if (parts[0] === "maps" && parts[1] === "resolve" && request.method === "POST") {
     const input = await body(request);
     return json({ url: await resolveGoogleMapsUrl(input.url) });
+  }
+  if (parts[0] === "maps" && parts[1] === "photo" && request.method === "GET") {
+    return googlePlacePhotoResponse(new URL(request.url).searchParams.get("name"), CONFIG.googlePlacesApiKey);
   }
   if (parts[0] === "exchange-rates") {
     if (request.method === "GET") {
@@ -1524,7 +1527,10 @@ function validateEntity(collection, data) {
   }
   if (
     collection === "places" &&
-    [data.photoUrl, data.photoAttributionUrl].some((value) => value && !String(value).startsWith("https://"))
+    (data.photoAttributionUrl && !String(data.photoAttributionUrl).startsWith("https://") ||
+      (data.photoUrl &&
+        !String(data.photoUrl).startsWith("https://") &&
+        !String(data.photoUrl).startsWith("/api/maps/photo?name=")))
   ) {
     throw new HttpError(422, "INVALID_PLACE_PHOTO", "La referencia de la foto de Google Maps no es válida.");
   }

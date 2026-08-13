@@ -1,6 +1,6 @@
 import { formatDate, searchKey, visualLabel, visualSymbol } from "./ui.js";
 import { EMOJI_GROUPS } from "./emojis.js";
-import { normalizePlaceAppearance, resolvePlaceBackground } from "./backgrounds.js";
+import { automaticPlacePhotoUrl, normalizePlaceAppearance, resolvePlaceBackground } from "./backgrounds.js";
 
 function assertEquals(actual, expected) {
   if (actual !== expected) throw new Error(`Esperado ${expected}; recibido ${actual}`);
@@ -128,6 +128,10 @@ Deno.test("la apariencia manual de un lugar tiene prioridad sobre la foto de Goo
   assertEquals(legacy.type, "image");
   assertEquals(legacy.automatic, true);
   assertEquals(normalizePlaceAppearance({ backgroundMode: "desconocido" }).mode, "auto");
+  assertEquals(
+    automaticPlacePhotoUrl({ googlePhotoName: "places/demo/photos/first", photoUrl: "https://old.example/photo" }),
+    "/api/maps/photo?name=places%2Fdemo%2Fphotos%2Ffirst",
+  );
 });
 
 Deno.test("compras e itinerario incorporan visor y selector horizontal accesibles", async () => {
@@ -278,5 +282,42 @@ Deno.test("Dashboard y Presupuesto importan sus operaciones monetarias", async (
   const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
   if (!/import \{[^}]*\bconvertMoney\b[^}]*\} from "\.\/money\.js";/s.test(app)) {
     throw new Error("convertMoney debe importarse antes de renderizar importes canónicos.");
+  }
+});
+
+Deno.test("las acciones de colecciones nuevas abren su editor", async () => {
+  const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  for (const collection of ["availabilities", "emergencyContacts", "journalEntries", "proposals"]) {
+    if (!app.includes(`data-add="${collection}"`)) {
+      throw new Error(`Falta la acción para añadir ${collection}.`);
+    }
+  }
+  if (!app.includes("ADD_ROUTE_ALIASES[button.dataset.add] || button.dataset.add")) {
+    throw new Error("Las acciones nuevas no resuelven directamente su colección.");
+  }
+});
+
+Deno.test("la transferencia de proyectos usa etiquetas orientadas al viaje", async () => {
+  const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  if (!app.includes("Exportar viaje") || !app.includes("Importar viaje")) {
+    throw new Error("Las acciones deben indicar claramente que transfieren el viaje.");
+  }
+  if (app.includes("Exportar para ChatGPT") || app.includes("Importar cambios")) {
+    throw new Error("Quedan etiquetas antiguas en la transferencia del viaje.");
+  }
+});
+
+Deno.test("el mapa móvil permite compartir ubicación y el visor no muestra flechas laterales", async () => {
+  const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
+  const css = await Deno.readTextFile(new URL("./styles.css", import.meta.url));
+  const lightbox = await Deno.readTextFile(new URL("./lightbox.js", import.meta.url));
+  if (!app.includes('data-share-location aria-label="Compartir ubicación durante 30 minutos"')) {
+    throw new Error("La acción de ubicación no es accesible en el mapa móvil.");
+  }
+  if (!css.includes(".map-location-share span") || !css.includes("z-index: 12")) {
+    throw new Error("Falta la presentación móvil de la acción de ubicación.");
+  }
+  if (lightbox.includes("data-lightbox-previous") || lightbox.includes("data-lightbox-next")) {
+    throw new Error("El visor no debe mostrar botones laterales de navegación.");
   }
 });

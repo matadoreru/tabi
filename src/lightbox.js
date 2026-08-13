@@ -39,12 +39,10 @@ function openLightbox(initialTrigger, allTriggers) {
   dialog.setAttribute("aria-modal", "true");
   dialog.setAttribute("aria-label", "Visor de fotografías");
   dialog.innerHTML =
-    `<div class="lightbox-toolbar"><span data-lightbox-counter></span><button class="lightbox-control" type="button" data-lightbox-zoom-out aria-label="Alejar">−</button><button class="lightbox-control" type="button" data-lightbox-zoom-in aria-label="Ampliar">+</button><button class="lightbox-control" type="button" data-lightbox-close aria-label="Cerrar">×</button></div><button class="lightbox-nav previous" type="button" data-lightbox-previous aria-label="Fotografía anterior">‹</button><div class="lightbox-stage" data-lightbox-stage><img draggable="false" alt=""></div><button class="lightbox-nav next" type="button" data-lightbox-next aria-label="Fotografía siguiente">›</button>`;
+    `<div class="lightbox-toolbar"><span data-lightbox-counter></span><button class="lightbox-control" type="button" data-lightbox-zoom-out aria-label="Alejar">−</button><button class="lightbox-control" type="button" data-lightbox-zoom-in aria-label="Ampliar">+</button><button class="lightbox-control" type="button" data-lightbox-close aria-label="Cerrar">×</button></div><div class="lightbox-stage" data-lightbox-stage><img draggable="false" alt=""></div>`;
   const image = dialog.querySelector("img");
   const stage = dialog.querySelector("[data-lightbox-stage]");
   const counter = dialog.querySelector("[data-lightbox-counter]");
-  const previous = dialog.querySelector("[data-lightbox-previous]");
-  const next = dialog.querySelector("[data-lightbox-next]");
 
   const transform = () => {
     image.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
@@ -61,8 +59,6 @@ function openLightbox(initialTrigger, allTriggers) {
     image.src = items[index].src;
     image.alt = items[index].alt;
     counter.textContent = items.length > 1 ? `${index + 1} / ${items.length}` : "";
-    previous.hidden = items.length < 2;
-    next.hidden = items.length < 2;
     resetTransform();
   };
   const zoom = (delta) => {
@@ -83,8 +79,6 @@ function openLightbox(initialTrigger, allTriggers) {
   };
 
   dialog.querySelector("[data-lightbox-close]").addEventListener("click", close);
-  previous.addEventListener("click", () => show(index - 1));
-  next.addEventListener("click", () => show(index + 1));
   dialog.querySelector("[data-lightbox-zoom-in]").addEventListener("click", () => zoom(.5));
   dialog.querySelector("[data-lightbox-zoom-out]").addEventListener("click", () => zoom(-.5));
   dialog.addEventListener("click", (event) => {

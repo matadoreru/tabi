@@ -36,11 +36,13 @@ TABI_POSTGRES_PASSWORD=CONTRASENA_ALEATORIA_LARGA
 TABI_POSTGRES_POOL_SIZE=10
 TABI_PUBLIC_ORIGIN=https://tabi.example.com
 TABI_GOOGLE_MAPS_API_KEY=CLAVE_WEB_RESTRINGIDA
+TABI_GOOGLE_PLACES_API_KEY=CLAVE_SERVIDOR_CON_PLACES_API_NEW
 TABI_GOOGLE_MAPS_MAP_ID=MAP_ID_DE_GOOGLE
 TABI_SECURE_COOKIE=true
 ```
 
-No publiques `5432` en `compose.yml` ni abras ese puerto en el router. La contraseña no debe subirse a Git.
+La clave de Places es una credencial de servidor distinta de la clave web y no debe restringirse por referente HTTP. No
+publiques `5432` en `compose.yml` ni abras ese puerto en el router. Las claves y la contraseña no deben subirse a Git.
 
 ## 2. Instalación nueva
 

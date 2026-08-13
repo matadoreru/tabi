@@ -1261,8 +1261,7 @@ textarea {
   font-size: 13px;
   text-align: center;
 }
-.lightbox-control,
-.lightbox-nav {
+.lightbox-control {
   display: grid;
   place-items: center;
   width: 42px;
@@ -1297,21 +1296,6 @@ textarea {
   transition: transform .12s ease-out;
   user-select: none;
 }
-.lightbox-nav {
-  position: absolute;
-  z-index: 2;
-  top: 50%;
-  width: 48px;
-  height: 48px;
-  transform: translateY(-50%);
-  font-size: 38px;
-}
-.lightbox-nav.previous {
-  left: 14px;
-}
-.lightbox-nav.next {
-  right: 14px;
-}
 @media (max-width: 640px) {
   .lightbox-backdrop {
     padding: 58px 12px 18px;
@@ -1319,17 +1303,6 @@ textarea {
   .lightbox-toolbar {
     top: 8px;
     right: 8px;
-  }
-  .lightbox-nav {
-    top: auto;
-    bottom: 14px;
-    transform: none;
-  }
-  .lightbox-nav.previous {
-    left: calc(50% - 58px);
-  }
-  .lightbox-nav.next {
-    right: calc(50% - 58px);
   }
 }
 .itinerary-toolbar {
@@ -2631,6 +2604,22 @@ textarea {
     top: 12px;
     left: 12px;
     box-shadow: var(--shadow);
+  }
+  .map-location-share {
+    z-index: 12;
+    top: 12px;
+    right: 12px;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    box-shadow: var(--shadow);
+  }
+  .map-location-share span {
+    display: none;
+  }
+  .map-location-share .icon {
+    width: 20px;
+    height: 20px;
   }
   .map-drawer-backdrop {
     display: block;

@@ -9,7 +9,7 @@ import {
   tripCurrencyConfig,
 } from "./currency.js";
 import { countryOptions, TRIP_EMOJIS } from "./countries.js";
-import { PLACE_BACKGROUND_MODES, resolvePlaceBackground } from "./backgrounds.js";
+import { automaticPlacePhotoUrl, PLACE_BACKGROUND_MODES, resolvePlaceBackground } from "./backgrounds.js";
 import {
   activityGoogleMapsUrl,
   budgetSummary,
@@ -85,6 +85,12 @@ const ui = {
 const NAV = NAVIGATION;
 const ROUTES = ROUTE_LABELS;
 const DESCRIPTIONS = ROUTE_DESCRIPTIONS;
+const ADD_ROUTE_ALIASES = Object.freeze({
+  itinerary: "activities",
+  budget: "expenses",
+  transport: "transports",
+  inspiration: "inspirations",
+});
 
 const fields = {
   activity: [
@@ -2413,17 +2419,20 @@ function googlePlacePhoto(place) {
   const photo = place.photos?.[0];
   if (!photo) return {};
   const attribution = photo.authorAttributions?.[0];
-  let photoUrl = "";
-  try {
-    if (typeof photo.getURI === "function") photoUrl = photo.getURI({ maxWidth: 1200, maxHeight: 720 });
-    else if (typeof photo.getUrl === "function") photoUrl = photo.getUrl({ maxWidth: 1200, maxHeight: 720 });
-  } catch {
-    return {};
+  const photoName = String(photo.name || "");
+  let photoUrl = automaticPlacePhotoUrl({ googlePhotoName: photoName });
+  if (!photoUrl) {
+    try {
+      if (typeof photo.getURI === "function") photoUrl = photo.getURI({ maxWidth: 1200, maxHeight: 720 });
+      else if (typeof photo.getUrl === "function") photoUrl = photo.getUrl({ maxWidth: 1200, maxHeight: 720 });
+    } catch {
+      return {};
+    }
   }
   if (!photoUrl) return {};
   return {
     photoUrl,
-    photoName: photo.name || "",
+    photoName,
     photoAttributionName: attribution?.displayName || "Google Maps",
     photoAttributionUrl: attribution?.uri || place.googleMapsURI || "",
   };
@@ -2718,7 +2727,8 @@ function initializePlaceEditor(root, item) {
   });
   mode?.addEventListener("change", updateAppearanceFields);
   updateAppearanceFields();
-  if (item?.photoUrl) updateGooglePhotoPreview(root, item.photoUrl);
+  const automaticPhoto = automaticPlacePhotoUrl(item);
+  if (automaticPhoto) updateGooglePhotoPreview(root, automaticPhoto);
 }
 
 function initializeActivityLinks(root) {
@@ -3195,9 +3205,9 @@ function renderMap() {
     ui.mapSidebarOpen ? "open" : ""
   }" type="button" data-map-panel-close aria-label="Cerrar lista de lugares"></button><div class="map-stage"><button class="btn btn-secondary map-panel-toggle" type="button" data-map-panel-toggle aria-expanded="${ui.mapSidebarOpen}">${
     icon("menu")
-  } Lugares (${places.length})</button><button class="btn btn-primary map-location-share" type="button" data-share-location>${
+  } Lugares (${places.length})</button><button class="btn btn-primary map-location-share" type="button" data-share-location aria-label="Compartir ubicación durante 30 minutos" title="Compartir ubicación durante 30 minutos">${
     icon("pin")
-  } Compartir 30 min</button><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div><div class="map-mobile-selected" data-map-selected ${
+  } <span>Compartir 30 min</span></button><div id="google-map" class="map-canvas"><div class="map-message"><span class="spinner"></span><p>Cargando Google Maps…</p></div></div><div class="map-mobile-selected" data-map-selected ${
     selected ? "" : "hidden"
   }>${mapSelectedDetails(selected)}</div></div></section>`;
 }
@@ -4194,15 +4204,15 @@ function renderSettings() {
       }>${icon("sync")} Actualizar ahora</button></div>`
       : ""
   }</form></section>
-      <section class="card card-pad project-transfer"><div class="card-head"><div><h2>Exportar e importar proyecto</h2><p>Copia completa editable en formato JSON</p></div><span class="stat-icon amber">${
+      <section class="card card-pad project-transfer"><div class="card-head"><div><h2>Exportar e importar viaje</h2><p>Copia completa editable en formato JSON</p></div><span class="stat-icon amber">${
     icon("download")
   }</span></div><p class="cell-sub">Incluye la configuración del viaje y todas sus actividades, lugares, tareas, notas, presupuesto, fondos, alojamientos, transportes, reservas e inspiración. No incluye cuentas, miembros, invitaciones ni contraseñas.</p><div class="project-transfer-actions"><button class="btn btn-secondary" type="button" data-export-project>${
     icon("download")
-  } Exportar para ChatGPT</button>${
+  } Exportar viaje</button>${
     session.can(PERMISSIONS.TRIP_EDIT)
       ? `<button class="btn btn-primary" type="button" data-import-project>${
         icon("upload")
-      } Importar cambios</button><input type="file" accept="application/json,.json" data-project-file hidden>`
+      } Importar viaje</button><input type="file" accept="application/json,.json" data-project-file hidden>`
       : ""
   }</div><span class="field-help">Al importar, el contenido del viaje se sustituye por el del archivo; los miembros y permisos se conservan.</span></section>
       <section class="card card-pad"><div class="card-head"><div><h2>Miembros</h2><p>${members.length} personas participan en este viaje</p></div>${
@@ -4853,19 +4863,8 @@ function bindCommon() {
   );
   app.querySelectorAll("[data-add]").forEach((button) =>
     button.addEventListener("click", () => {
-      const map = {
-        itinerary: "activities",
-        places: "places",
-        purchases: "purchases",
-        tasks: "tasks",
-        notes: "notes",
-        budget: "expenses",
-        stays: "stays",
-        transport: "transports",
-        reservations: "reservations",
-        inspiration: "inspirations",
-      };
-      openEditor(map[button.dataset.add]);
+      const collection = ADD_ROUTE_ALIASES[button.dataset.add] || button.dataset.add;
+      openEditor(collection);
     })
   );
   app.querySelectorAll("[data-trip-list]").forEach((button) =>
