@@ -2093,7 +2093,9 @@ function renderItinerary() {
     session.can(PERMISSIONS.TRIP_EDIT) && items.length
       ? `<button class="btn btn-secondary" type="button" data-duplicate-day>${icon("file")} Duplicar día</button>`
       : ""
-  }<label class="search day-filter">${icon("search")}<input type="search" data-day-search value="${esc(ui.dayQuery)}" placeholder="Filtrar días por nombre…" aria-label="Filtrar días por nombre"></label></div><div class="day-strip" role="tablist" aria-label="Días del viaje">${
+  }<label class="search day-filter">${icon("search")}<input type="search" data-day-search value="${
+    esc(ui.dayQuery)
+  }" placeholder="Filtrar días por nombre…" aria-label="Filtrar días por nombre"></label></div><div class="day-strip" role="tablist" aria-label="Días del viaje">${
     visibleDates.map((item) => {
       const parsed = new Date(`${item}T12:00`);
       const selected = item === date;
@@ -2111,11 +2113,19 @@ function renderItinerary() {
             Math.round(forecast.maximum)
           }°</span>`
           : ""
-  }</button>`;
+      }</button>`;
     }).join("")
-  }${visibleDates.length ? "" : `<p class="cell-sub day-filter-empty">No hay días con ese nombre.</p>`}</div><div class="section-title"><div><h2>${dayName(date) ? `${esc(dayName(date))} · ` : ""}${fullDate(date)}</h2><p>Día ${
-    dates.indexOf(date) + 1
-  } de ${dates.length}</p></div>${session.can(PERMISSIONS.TRIP_EDIT) ? `<button class="btn btn-secondary" type="button" data-edit-day-name>${icon("edit")} ${dayName(date) ? "Editar nombre" : "Nombrar día"}</button>` : ""}</div>${body}`;
+  }${
+    visibleDates.length ? "" : `<p class="cell-sub day-filter-empty">No hay días con ese nombre.</p>`
+  }</div><div class="section-title"><div><h2>${dayName(date) ? `${esc(dayName(date))} · ` : ""}${
+    fullDate(date)
+  }</h2><p>Día ${dates.indexOf(date) + 1} de ${dates.length}</p></div>${
+    session.can(PERMISSIONS.TRIP_EDIT)
+      ? `<button class="btn btn-secondary" type="button" data-edit-day-name>${icon("edit")} ${
+        dayName(date) ? "Editar nombre" : "Nombrar día"
+      }</button>`
+      : ""
+  }</div>${body}`;
 }
 
 function itineraryAvailabilityWarnings(items, date) {
