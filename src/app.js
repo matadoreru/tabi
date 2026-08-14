@@ -1998,6 +1998,7 @@ function renderItinerary() {
   const items = activitiesForDate(date);
   const analysis = itineraryAnalysis(items);
   const availabilityWarnings = itineraryAvailabilityWarnings(items, date);
+  const routePairs = [];
   const optimizedSlots = optimizedActivitySlots(
     items.filter((item) => !item.virtual && item.fixedTime !== true && item.fixedTime !== "true").map(
       activityCoordinates,
@@ -2053,7 +2054,7 @@ function renderItinerary() {
       `<div class="insight warning">${icon("users")}<div>${esc(warning)}</div></div>`
     ).join("")
   }</div></section>${
-    false && session.can(PERMISSIONS.TRIP_EDIT)
+    routePairs.length && session.can(PERMISSIONS.TRIP_EDIT)
       ? `<section class="card card-pad"><div class="card-head"><div><h3>Desplazamientos</h3><p>Entre lugares con coordenadas</p></div></div><div class="item-list">${
         routePairs.map((pair) => {
           const estimate = ui.routeEstimates[routePairKey(pair)];
@@ -2080,7 +2081,7 @@ function renderItinerary() {
     ).join("") || "<p style='color:var(--muted)'>No hay huecos de 30 minutos o más.</p>"
   }</div></section></aside></div>`;
   return `<div class="toolbar itinerary-toolbar">${addAction("itinerary", "Añadir actividad")}${
-    false
+    routePairs.length
       ? `<button class="btn btn-secondary" type="button" data-calculate-routes>${
         icon("map")
       } Calcular trayectos</button>`
