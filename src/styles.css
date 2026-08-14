@@ -1324,6 +1324,15 @@ textarea {
   font-size: 10px;
   text-transform: uppercase;
 }
+.day-button .day-name {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .day-button.active {
   color: #fff;
   background: var(--primary);
@@ -1404,6 +1413,13 @@ textarea {
 }
 .itinerary-toolbar {
   justify-content: flex-end;
+}
+.day-filter {
+  min-width: 210px;
+  margin-left: auto;
+}
+.day-filter-empty {
+  padding: 8px 2px;
 }
 .planner-layout {
   display: grid;

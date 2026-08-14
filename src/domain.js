@@ -21,12 +21,9 @@ export function itineraryAnalysis(activities) {
     else gaps.push({ first: activity, second: next, available });
   });
   const plannedMinutes = sorted.reduce((sum, item) => sum + Math.max(0, minutes(item.end) - minutes(item.start)), 0);
-  const distinctAreas = new Set(sorted.map((item) => item.location).filter(Boolean)).size;
-  const warnings = [];
-  if (plannedMinutes > 600) warnings.push("Día muy cargado: más de 10 horas planificadas.");
-  if (sorted.length > 7) warnings.push("Muchas paradas: considera reducir o agrupar actividades.");
-  if (distinctAreas > 5) warnings.push("Demasiados cambios de zona pueden aumentar los desplazamientos.");
-  return { sorted, conflicts, gaps, plannedMinutes, warnings };
+  // Las recomendaciones genéricas de carga, número de paradas y cambios de zona
+  // se han retirado del análisis diario; se mantienen las advertencias de solapamientos.
+  return { sorted, conflicts, gaps, plannedMinutes, warnings: [] };
 }
 
 export function activityGoogleMapsUrl(activity, places = []) {

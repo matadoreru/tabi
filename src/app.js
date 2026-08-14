@@ -50,8 +50,7 @@ import { canonicalBudgetSummary } from "./finance.js";
 import { convertMoney, decimalToMinor, minorToDecimal, moneyToNumber } from "./money.js";
 import { NAVIGATION, ROUTE_DESCRIPTIONS, ROUTE_LABELS } from "./navigation.js";
 import { browserTimeZone, timeZoneOptions, todayInTimeZone } from "./time.js";
-import { exportTripIcs } from "./calendar.js";
-import { googlePlaceMetadata, itineraryRoutePairs, optimizedActivitySlots, placeMetadataIsStale } from "./places.js";
+import { googlePlaceMetadata, optimizedActivitySlots, placeMetadataIsStale } from "./places.js";
 import { DEFAULT_TEMPLATE_COLLECTIONS, DUPLICABLE_COLLECTIONS } from "./templates.js";
 import { TRIP_PHASES, tripPhase, tripPhaseCopy } from "./trip-phase.js";
 import { pwaManager } from "./pwa.js";
@@ -72,12 +71,12 @@ const ui = {
   mapSidebarOpen: false,
   mapSavedQuery: "",
   mapExportRegion: "country",
+  dayQuery: "",
   filter: "Todos",
   authMode: "login",
   inspirationStatus: "Todos",
   commitSha: "",
   busy: false,
-  routeEstimates: {},
   unseenChanges: 0,
   pwaDiagnostics: null,
   weather: {},
@@ -674,6 +673,13 @@ function activeDate() {
   const today = todayInTimeZone(trip.timeZone);
   if (!ui.selectedDate) ui.selectedDate = today >= trip.startDate && today <= trip.endDate ? today : trip.startDate;
   return ui.selectedDate;
+}
+function dayNames() {
+  const names = store.activeTrip?.extra?.dayNames;
+  return names && typeof names === "object" && !Array.isArray(names) ? names : {};
+}
+function dayName(date) {
+  return String(dayNames()[date] || "").trim();
 }
 function tripDay(date) {
   return Math.max(1, dateRange(store.activeTrip.startDate, date).length);
@@ -1403,7 +1409,6 @@ async function enterTrip(tripId, route = "dashboard") {
     location.hash = route;
     await refreshPwaDiagnostics();
     render();
-    notifyDueReminders();
     loadTripWeather();
   } catch (error) {
     toast(error.message, "error");
@@ -1886,57 +1891,6 @@ function activityCoordinates(item) {
     : item;
 }
 
-function routePairKey(pair, mode = "WALKING") {
-  return `${Number(pair.origin.lat).toFixed(5)},${Number(pair.origin.lng).toFixed(5)}>${
-    Number(pair.destination.lat).toFixed(5)
-  },${Number(pair.destination.lng).toFixed(5)}:${mode}`;
-}
-
-async function routeKeyDigest(pair, mode = "WALKING") {
-  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(routePairKey(pair, mode)));
-  return [...new Uint8Array(bytes)].map((value) => value.toString(16).padStart(2, "0")).join("");
-}
-
-async function calculateItineraryRoutes(button) {
-  const pairs = itineraryRoutePairs(activitiesForDate(activeDate()).map(activityCoordinates));
-  if (!pairs.length) return toast("Vincula coordenadas a dos actividades para calcular el trayecto.", "error");
-  button.disabled = true;
-  try {
-    const config = await apiClient.get("/config/maps");
-    if (!config.enabled) throw new Error("Configura Google Maps para calcular desplazamientos.");
-    await loadGoogleMaps(config.apiKey);
-    const { DirectionsService, TravelMode } = await google.maps.importLibrary("routes");
-    const service = new DirectionsService();
-    for (const pair of pairs) {
-      const mode = "WALKING";
-      const digest = await routeKeyDigest(pair, mode);
-      const cached = await apiClient.get(`/trips/${store.activeTrip.id}/route-estimates?key=${digest}&mode=${mode}`);
-      let estimate = cached.estimate;
-      if (!estimate) {
-        const result = await service.route({
-          origin: { lat: Number(pair.origin.lat), lng: Number(pair.origin.lng) },
-          destination: { lat: Number(pair.destination.lat), lng: Number(pair.destination.lng) },
-          travelMode: TravelMode.WALKING,
-        });
-        const leg = result.routes?.[0]?.legs?.[0];
-        if (!leg) continue;
-        estimate = {
-          routeKey: digest,
-          travelMode: mode,
-          durationSeconds: Number(leg.duration?.value || 0),
-          distanceMeters: Number(leg.distance?.value || 0),
-        };
-        await apiClient.post(`/trips/${store.activeTrip.id}/route-estimates`, estimate);
-      }
-      ui.routeEstimates[routePairKey(pair, mode)] = estimate;
-    }
-    toast("Desplazamientos actualizados");
-    render();
-  } catch (error) {
-    button.disabled = false;
-    toast(error.message || "No se han podido calcular los trayectos.", "error");
-  }
-}
 function miniTimeline(items, showAction = true) {
   return items.length
     ? `<div class="timeline">${
@@ -2039,10 +1993,11 @@ function renderItinerary() {
   const trip = store.activeTrip;
   const dates = dateRange(trip.startDate, trip.endDate);
   const date = activeDate();
+  const daySearch = searchKey(ui.dayQuery);
+  const visibleDates = dates.filter((item) => !daySearch || searchKey(dayName(item)).includes(daySearch));
   const items = activitiesForDate(date);
   const analysis = itineraryAnalysis(items);
   const availabilityWarnings = itineraryAvailabilityWarnings(items, date);
-  const routePairs = itineraryRoutePairs(items.map(activityCoordinates));
   const optimizedSlots = optimizedActivitySlots(
     items.filter((item) => !item.virtual && item.fixedTime !== true && item.fixedTime !== "true").map(
       activityCoordinates,
@@ -2098,7 +2053,7 @@ function renderItinerary() {
       `<div class="insight warning">${icon("users")}<div>${esc(warning)}</div></div>`
     ).join("")
   }</div></section>${
-    routePairs.length && session.can(PERMISSIONS.TRIP_EDIT)
+    false && session.can(PERMISSIONS.TRIP_EDIT)
       ? `<section class="card card-pad"><div class="card-head"><div><h3>Desplazamientos</h3><p>Entre lugares con coordenadas</p></div></div><div class="item-list">${
         routePairs.map((pair) => {
           const estimate = ui.routeEstimates[routePairKey(pair)];
@@ -2124,11 +2079,8 @@ function renderItinerary() {
       }</strong><small>Después de ${esc(g.first.title)}</small></div></div>`
     ).join("") || "<p style='color:var(--muted)'>No hay huecos de 30 minutos o más.</p>"
   }</div></section></aside></div>`;
-  const reminders = store.collection("reminders").filter((item) =>
-    item.status !== "dismissed" && item.remindAt?.slice(0, 10) === date
-  );
   return `<div class="toolbar itinerary-toolbar">${addAction("itinerary", "Añadir actividad")}${
-    routePairs.length
+    false
       ? `<button class="btn btn-secondary" type="button" data-calculate-routes>${
         icon("map")
       } Calcular trayectos</button>`
@@ -2141,40 +2093,29 @@ function renderItinerary() {
     session.can(PERMISSIONS.TRIP_EDIT) && items.length
       ? `<button class="btn btn-secondary" type="button" data-duplicate-day>${icon("file")} Duplicar día</button>`
       : ""
-  }${
-    session.can(PERMISSIONS.TRIP_EDIT)
-      ? `<button class="btn btn-secondary" type="button" data-add-reminder>${icon("clock")} Recordatorio</button>`
-      : ""
-  }<button class="btn btn-secondary" type="button" data-export-ics>${
-    icon("download")
-  } Calendario .ics</button></div><div class="day-strip" role="tablist" aria-label="Días del viaje">${
-    dates.map((item) => {
+  }<label class="search day-filter">${icon("search")}<input type="search" data-day-search value="${esc(ui.dayQuery)}" placeholder="Filtrar días por nombre…" aria-label="Filtrar días por nombre"></label></div><div class="day-strip" role="tablist" aria-label="Días del viaje">${
+    visibleDates.map((item) => {
       const parsed = new Date(`${item}T12:00`);
       const selected = item === date;
       const forecast = ui.weather[item];
+      const label = dayName(item);
       return `<button class="day-button ${selected ? "active" : ""} ${
         item === todayIso() ? "today" : ""
       }" data-date="${item}" role="tab" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}"><small>${
         new Intl.DateTimeFormat("es-ES", { weekday: "short" }).format(parsed)
       }</small><strong>${new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short" }).format(parsed)}</strong>${
+        label ? `<span class="day-name">${esc(label)}</span>` : ""
+      }${
         forecast
           ? `<span class="day-weather" title="${forecast.rainProbability}% de lluvia">${weatherSymbol(forecast.code)} ${
             Math.round(forecast.maximum)
           }°</span>`
           : ""
-      }</button>`;
+  }</button>`;
     }).join("")
-  }</div><div class="section-title"><div><h2>${fullDate(date)}</h2><p>Día ${
+  }${visibleDates.length ? "" : `<p class="cell-sub day-filter-empty">No hay días con ese nombre.</p>`}</div><div class="section-title"><div><h2>${dayName(date) ? `${esc(dayName(date))} · ` : ""}${fullDate(date)}</h2><p>Día ${
     dates.indexOf(date) + 1
-  } de ${dates.length}</p></div></div>${
-    reminders.length
-      ? `<section class="card card-pad reminder-strip" aria-label="Recordatorios del día"><strong>Recordatorios</strong>${
-        reminders.map((item) =>
-          `<span>${icon("clock")} ${esc(item.title)} · ${esc(item.remindAt.slice(11, 16))}</span>`
-        ).join("")
-      }</section>`
-      : ""
-  }${body}`;
+  } de ${dates.length}</p></div>${session.can(PERMISSIONS.TRIP_EDIT) ? `<button class="btn btn-secondary" type="button" data-edit-day-name>${icon("edit")} ${dayName(date) ? "Editar nombre" : "Nombrar día"}</button>` : ""}</div>${body}`;
 }
 
 function itineraryAvailabilityWarnings(items, date) {
@@ -3385,38 +3326,6 @@ async function openComments(collection, id) {
   });
 }
 
-function exportCalendar() {
-  const url = URL.createObjectURL(new Blob([exportTripIcs(store.getState())], { type: "text/calendar;charset=utf-8" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${
-    store.activeTrip.name.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").toLocaleLowerCase() || "tabi"
-  }.ics`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-  toast("Calendario exportado");
-}
-
-function createReminder() {
-  modal({
-    title: "Nuevo recordatorio",
-    fields: [
-      { name: "title", label: "Qué quieres recordar", required: true, full: true },
-      { name: "remindAt", label: "Fecha y hora", type: "datetime-local", required: true, full: true },
-    ],
-    values: { remindAt: `${activeDate()}T09:00` },
-    submitLabel: "Guardar recordatorio",
-    onSubmit: async (values) => {
-      await store.add("reminders", { ...values, timeZone: store.activeTrip.timeZone || "UTC", status: "pending" });
-      if ("Notification" in globalThis && Notification.permission === "default") await Notification.requestPermission();
-      toast("Recordatorio guardado");
-      render();
-    },
-  });
-}
-
 function duplicateDayDialog() {
   const sourceDate = activeDate();
   modal({
@@ -3430,6 +3339,37 @@ function duplicateDayDialog() {
       session.selectTrip(payload);
       ui.selectedDate = targetDate;
       toast("Día duplicado");
+      render();
+    },
+  });
+}
+
+function editDayName() {
+  const date = activeDate();
+  const trip = store.activeTrip;
+  modal({
+    title: `Nombrar día · ${fullDate(date)}`,
+    fields: [{
+      name: "name",
+      label: "Nombre del día",
+      placeholder: "Ej. Tokio tradicional",
+      help: "Puedes dejarlo vacío para quitar el nombre.",
+      full: true,
+    }],
+    values: { name: dayName(date) },
+    submitLabel: "Guardar nombre",
+    onSubmit: async ({ name }) => {
+      const names = { ...dayNames() };
+      const value = String(name || "").trim().slice(0, 120);
+      if (value) names[date] = value;
+      else delete names[date];
+      await apiClient.patch(`/trips/${trip.id}`, {
+        extra: { ...(trip.extra || {}), dayNames: names },
+        version: trip.version,
+      });
+      const payload = await store.loadTrip(trip.id, handleRemoteChange);
+      session.selectTrip(payload);
+      toast(value ? "Nombre del día guardado" : "Nombre del día eliminado");
       render();
     },
   });
@@ -3487,21 +3427,6 @@ function duplicateActivityDialog(id) {
   });
 }
 
-function notifyDueReminders() {
-  if (!("Notification" in globalThis) || Notification.permission !== "granted") return;
-  const notified = new Set(JSON.parse(localStorage.getItem("tabi-notified-reminders") || "[]"));
-  for (const item of store.collection("reminders")) {
-    if (
-      item.status === "dismissed" || notified.has(item.id) ||
-      Date.parse(item.remindInstant || item.remindAt) > Date.now()
-    ) {
-      continue;
-    }
-    new Notification(item.title, { body: `Recordatorio de ${store.activeTrip.name}`, icon: "/assets/icon.svg" });
-    notified.add(item.id);
-  }
-  localStorage.setItem("tabi-notified-reminders", JSON.stringify([...notified].slice(-200)));
-}
 function copyReferenceButton(collection, item, field = "reference") {
   return item[field]
     ? `<button class="btn btn-ghost icon-btn" type="button" data-copy-reference="${collection}:${item.id}:${field}" aria-label="Copiar referencia" title="Copiar referencia">${
@@ -4930,18 +4855,22 @@ function bindCommon() {
 }
 
 function bindRoute() {
-  app.querySelector("[data-export-ics]")?.addEventListener("click", exportCalendar);
-  app.querySelector("[data-add-reminder]")?.addEventListener("click", createReminder);
   app.querySelector("[data-duplicate-day]")?.addEventListener("click", duplicateDayDialog);
+  app.querySelector("[data-edit-day-name]")?.addEventListener("click", editDayName);
+  app.querySelector("[data-day-search]")?.addEventListener("input", (event) => {
+    ui.dayQuery = event.target.value;
+    render();
+    requestAnimationFrame(() => {
+      const input = app.querySelector("[data-day-search]");
+      input?.focus();
+      input?.setSelectionRange(input.value.length, input.value.length);
+    });
+  });
   app.querySelectorAll("[data-clone-activity]").forEach((button) =>
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       duplicateActivityDialog(button.dataset.cloneActivity);
     })
-  );
-  app.querySelector("[data-calculate-routes]")?.addEventListener(
-    "click",
-    (event) => calculateItineraryRoutes(event.currentTarget),
   );
   app.querySelectorAll("[data-go-date]").forEach((button) =>
     button.addEventListener("click", () => {
