@@ -228,17 +228,16 @@ Deno.test("la cuenta ofrece recuperación segura y cierre de otras sesiones", as
   }
 });
 
-Deno.test("Fase 2 integra zonas, calendario, trayectos, colaboración y tablas móviles", async () => {
+Deno.test("Fase 2 integra zonas, nombres de días, colaboración y tablas móviles", async () => {
   const app = await Deno.readTextFile(new URL("./app.js", import.meta.url));
   const css = await Deno.readTextFile(new URL("./styles.css", import.meta.url));
   const api = await Deno.readTextFile(new URL("../backend/api.js", import.meta.url));
   for (
     const marker of [
       "timeZoneOptions",
-      "data-export-ics",
-      "data-calculate-routes",
+      "data-day-search",
+      "data-edit-day-name",
       "data-comments",
-      "data-add-reminder",
     ]
   ) {
     if (!app.includes(marker)) throw new Error(`Falta la integración ${marker}`);
