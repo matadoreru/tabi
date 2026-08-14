@@ -1801,6 +1801,18 @@ textarea {
   transform: rotate(-8deg);
   transition: transform .16s, scale .16s;
 }
+.custom-map-marker.status-green {
+  background: var(--accent);
+}
+.custom-map-marker.status-amber {
+  background: var(--warning);
+}
+.custom-map-marker.status-red {
+  background: var(--danger);
+}
+.custom-map-marker.status-blue {
+  background: var(--blue);
+}
 .custom-map-marker:hover,
 .custom-map-marker.selected {
   z-index: 2;

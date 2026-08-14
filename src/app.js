@@ -38,6 +38,7 @@ import {
   modal,
   moneyPair,
   searchKey,
+  statusTone,
   toast,
   visualLabel,
 } from "./ui.js";
@@ -2434,7 +2435,7 @@ function mapSelectedDetails(place) {
 
 function mapMarkerContent(place) {
   const marker = document.createElement("div");
-  marker.className = "custom-map-marker";
+  marker.className = `custom-map-marker status-${statusTone(place.status || "Pendiente")}`;
   marker.textContent = savedPlaceIcon(place);
   marker.setAttribute("aria-label", place.name);
   return marker;
