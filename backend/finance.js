@@ -5,6 +5,10 @@ import { allocateMoney, monetaryField } from "../src/money.js";
 
 const PROJECTION_VERSION = 2;
 
+export async function lockFinancialProjection(tripId) {
+  await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?,0))").get(`financial-projection:${tripId}`);
+}
+
 function jsonObject(value) {
   return typeof value === "string" ? JSON.parse(value) : value || {};
 }
@@ -124,14 +128,27 @@ export async function ensureFinancialProjection(tripId, tripCurrency) {
     )
   ) return;
   await transaction(async () => {
+    // Bootstrap y /finance pueden llegar a la vez (varias pestañas o miembros). Solo una
+    // petición debe reconstruir la proyección; la segunda la reutiliza al obtener el lock.
+    await lockFinancialProjection(tripId);
+    if (
+      await db.prepare("SELECT 1 FROM financial_projection_state WHERE trip_id=? AND projection_version=?").get(
+        tripId,
+        PROJECTION_VERSION,
+      )
+    ) return;
     for (const collection of FINANCIAL_COLLECTIONS) {
       const rows = await db.prepare(`SELECT * FROM ${entityTable(collection)} WHERE trip_id=?`).all(tripId);
       for (const row of rows) await syncFinancialSource(tripId, collection, readSource(row), tripCurrency);
     }
-    await db.prepare(
-      "INSERT INTO financial_projection_state(trip_id,projection_version,projected_at) VALUES (?,?,?) ON CONFLICT(trip_id) DO UPDATE SET projection_version=excluded.projection_version,projected_at=excluded.projected_at",
-    ).run(tripId, PROJECTION_VERSION, now());
+    await markFinancialProjectionCurrent(tripId);
   });
+}
+
+export async function markFinancialProjectionCurrent(tripId, timestamp = now()) {
+  await db.prepare(
+    "INSERT INTO financial_projection_state(trip_id,projection_version,projected_at) VALUES (?,?,?) ON CONFLICT(trip_id) DO UPDATE SET projection_version=excluded.projection_version,projected_at=excluded.projected_at",
+  ).run(tripId, PROJECTION_VERSION, timestamp);
 }
 
 export async function removeFinancialSource(tripId, collection, sourceId) {

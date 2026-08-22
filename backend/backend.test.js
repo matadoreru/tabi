@@ -561,6 +561,27 @@ Deno.test({
     );
     assertEquals(importedArchive.status, 200);
     assertEquals(importedArchive.data.trip.name, "Japón editado desde archivo");
+    assertEquals(
+      Number(
+        (await db.prepare("SELECT projection_version FROM financial_projection_state WHERE trip_id=?").get(tripId))
+          .projection_version,
+      ),
+      2,
+    );
+    await db.prepare("UPDATE financial_projection_state SET projection_version=1 WHERE trip_id=?").run(tripId);
+    const concurrentBootstraps = await Promise.all([
+      call("GET", `/api/trips/${tripId}/bootstrap`, null, owner.cookie),
+      call("GET", `/api/trips/${tripId}/bootstrap`, null, alex.cookie),
+    ]);
+    assertEquals(concurrentBootstraps[0].status, 200);
+    assertEquals(concurrentBootstraps[1].status, 200);
+    assertEquals(
+      Number(
+        (await db.prepare("SELECT projection_version FROM financial_projection_state WHERE trip_id=?").get(tripId))
+          .projection_version,
+      ),
+      2,
+    );
     const afterArchive = await call("GET", `/api/trips/${tripId}/bootstrap`, null, owner.cookie);
     assertEquals(afterArchive.data.places[0].description, "Cambio externo");
     assertEquals(afterArchive.data.tasks[0].title, "Preparar maletas");

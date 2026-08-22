@@ -8,7 +8,14 @@ import { body, HttpError, json, newId, now, validateMutationOrigin } from "./htt
 import { eventStream, publish } from "./events.js";
 import { getExchangeRate } from "./exchange-rates.js";
 import { googleMapsUrl, googlePlacePhotoResponse, resolveGoogleMapsUrl } from "./google-maps.js";
-import { ensureFinancialProjection, financialState, removeFinancialSource, syncFinancialSource } from "./finance.js";
+import {
+  ensureFinancialProjection,
+  financialState,
+  lockFinancialProjection,
+  markFinancialProjectionCurrent,
+  removeFinancialSource,
+  syncFinancialSource,
+} from "./finance.js";
 import { extractMediaAssets, mediaResponse, removeOwnedMedia } from "./media.js";
 import { PERMISSIONS, permissionsForRole } from "../src/permissions.js";
 import { findPlaceDuplicate, inspirationLink } from "../src/domain.js";
@@ -315,6 +322,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     if (collection === "places") await assertUniquePlace(tripId, data);
     const title = entityTitle(collection, data);
     await transaction(async () => {
+      await lockFinancialProjection(tripId);
       await extractMediaAssets(tripId, collection, entityId, data, user.id);
       await db.prepare(
         `INSERT INTO ${table}(id,trip_id,data,version,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?)`,
@@ -344,6 +352,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
     if (collection === "inspirations") await assertUniqueInspiration(tripId, data.url, id);
     if (collection === "places") await assertUniquePlace(tripId, data, id);
     await transaction(async () => {
+      await lockFinancialProjection(tripId);
       await extractMediaAssets(tripId, collection, id, data, user.id);
       const result = await db.prepare(
         `UPDATE ${table} SET data=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND trip_id=? AND version=?`,
@@ -363,6 +372,7 @@ async function entityRoutes(request, user, tripId, collection, id) {
   if (request.method === "DELETE") {
     if (Number(input.version) !== current.version) conflict(current.version);
     await transaction(async () => {
+      await lockFinancialProjection(tripId);
       await db.prepare("DELETE FROM entity_comments WHERE trip_id=? AND entity_collection=? AND entity_id=?").run(
         tripId,
         collection,
@@ -400,6 +410,7 @@ async function historyRoutes(request, user, tripId, logId) {
   const timestamp = now();
   const data = cleanEntity(metadata.previous);
   await transaction(async () => {
+    await lockFinancialProjection(tripId);
     if (current) {
       await db.prepare(
         `UPDATE ${table} SET data=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND trip_id=?`,
@@ -739,11 +750,7 @@ async function duplicateTrip(request, user, tripId) {
         await syncFinancialSource(newTripId, collection, { ...data, id: entityId }, source.currency, timestamp);
       }
     }
-    await db.prepare("INSERT INTO financial_projection_state(trip_id,projection_version,projected_at) VALUES (?,1,?)")
-      .run(
-        newTripId,
-        timestamp,
-      );
+    await markFinancialProjectionCurrent(newTripId, timestamp);
     await audit(
       newTripId,
       user.id,
@@ -1112,6 +1119,7 @@ async function importTripArchive(archive, user, tripId) {
   const entityCount = Object.values(prepared).reduce((sum, items) => sum + items.length, 0);
   const importedTripExtra = tripExtra({ ...trip, ...trip.extra });
   await transaction(async () => {
+    await lockFinancialProjection(tripId);
     await db.prepare("DELETE FROM entity_comments WHERE trip_id=?").run(tripId);
     await db.prepare("DELETE FROM route_estimates WHERE trip_id=?").run(tripId);
     await db.prepare("DELETE FROM media_assets WHERE trip_id=?").run(tripId);
@@ -1146,11 +1154,7 @@ async function importTripArchive(archive, user, tripId) {
         await syncFinancialSource(tripId, collection, { ...item.data, id: item.id }, trip.currency, timestamp);
       }
     }
-    await db.prepare("INSERT INTO financial_projection_state(trip_id,projection_version,projected_at) VALUES (?,1,?)")
-      .run(
-        tripId,
-        timestamp,
-      );
+    await markFinancialProjectionCurrent(tripId, timestamp);
     await audit(tripId, user.id, "trip.archive_imported", "trip", tripId, {
       entityCount,
       schemaVersion: ARCHIVE_SCHEMA_VERSION,
@@ -1171,6 +1175,7 @@ async function importTripData(request, user, tripId) {
   const timestamp = now();
   let count = 0;
   await transaction(async () => {
+    await lockFinancialProjection(tripId);
     for (const [collection, table] of Object.entries(ENTITY_TABLES)) {
       if (!PORTABLE_COLLECTIONS.has(collection)) continue;
       for (const source of input[collection] || []) {
