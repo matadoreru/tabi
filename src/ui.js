@@ -542,12 +542,12 @@ function compressedImage(file) {
   });
 }
 
-export function toast(message, tone = "success") {
+export function toast(message, tone = "success", duration = 2800) {
   const root = document.querySelector("#toast-root");
   root.innerHTML = `<div class="toast ${tone === "error" ? "error" : ""}">${esc(message)}</div>`;
   setTimeout(() => {
     root.innerHTML = "";
-  }, 2800);
+  }, duration);
 }
 
 export function emptyState(title, copy, action = "") {

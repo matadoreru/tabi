@@ -528,6 +528,20 @@ Deno.test({
     assertEquals(archiveResponse.data.collections.places[0].id, place.data.item.id);
     assertEquals(archiveResponse.data.collections.notes[0].title, "Recordatorio");
     assertEquals(archiveResponse.data.collections.places[0].version, undefined);
+    const invalidArchive = structuredClone(archiveResponse.data);
+    delete invalidArchive.collections.activities[0].title;
+    const rejectedArchive = await call(
+      "POST",
+      `/api/trips/${tripId}/archive`,
+      { archive: invalidArchive },
+      owner.cookie,
+    );
+    assertEquals(rejectedArchive.status, 422);
+    assertEquals(rejectedArchive.data.error.code, "REQUIRED");
+    assertEquals(rejectedArchive.data.error.details.archive.path, "collections.activities[0]");
+    assertEquals(rejectedArchive.data.error.details.archive.label, invalidArchive.collections.activities[0].id);
+    assertEquals(rejectedArchive.data.error.details.issues[0].path, "collections.activities[0].title");
+    assert(rejectedArchive.data.error.message.includes("collections.activities[0]"));
     archiveResponse.data.trip.name = "Japón editado desde archivo";
     archiveResponse.data.collections.places[0].description = "Cambio externo";
     archiveResponse.data.collections.places.push({ id: "place_new_1", name: "Kinkaku-ji", city: "Kioto" });

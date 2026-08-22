@@ -57,6 +57,7 @@ import { pwaManager } from "./pwa.js";
 import { tripCache } from "./offline-cache.js";
 import { parseReservationText } from "./reservation-import.js";
 import { TASK_TEMPLATES, templateTasks } from "./task-templates.js";
+import { formatArchiveImportError, parseTripArchiveJson, tripArchiveCompatibilityIssue } from "./archive-import.js";
 
 const store = new Store();
 const LAST_TRIP_KEY = "tabi-last-trip-v1";
@@ -5347,12 +5348,13 @@ async function importProject(file) {
   if (file.size > 10_000_000) return toast("El proyecto supera el límite de 10 MB.", "error");
   let archive;
   try {
-    archive = JSON.parse(await file.text());
-  } catch {
-    return toast("El archivo no contiene un JSON válido.", "error");
+    archive = parseTripArchiveJson(await file.text(), file.name);
+  } catch (error) {
+    return toast(error.message, "error", 12_000);
   }
-  if (archive?.format !== "tabi-trip" || ![1, 2, 3].includes(archive?.schemaVersion) || !archive.collections) {
-    return toast("Selecciona un proyecto Tabi compatible.", "error");
+  const compatibilityIssue = tripArchiveCompatibilityIssue(archive);
+  if (compatibilityIssue) {
+    return toast(`No se puede importar “${file.name}”.\n${compatibilityIssue}`, "error", 12_000);
   }
   const entityCount = Object.values(archive.collections).reduce(
     (sum, items) => sum + (Array.isArray(items) ? items.length : 0),
@@ -5377,7 +5379,7 @@ async function importProject(file) {
     );
     render();
   } catch (error) {
-    toast(error.message || "No se ha podido importar el proyecto.", "error");
+    toast(formatArchiveImportError(error, file.name), "error", 12_000);
   } finally {
     ui.busy = false;
   }

@@ -899,16 +899,56 @@ async function tripArchiveRoutes(request, user, tripId) {
   return importTripArchive(input.archive || input, user, tripId);
 }
 
+function archiveItemContext(collection, index, source = {}) {
+  const label = [source.title, source.name, source.product, source.origin, source.url, source.id]
+    .map((value) => String(value || "").trim())
+    .find(Boolean);
+  return {
+    collection,
+    index,
+    path: `collections.${collection}[${index}]`,
+    ...(source.id == null ? {} : { id: String(source.id) }),
+    ...(label ? { label: label.slice(0, 160) } : {}),
+  };
+}
+
+function archiveValidationError(error, archive, fields = []) {
+  if (!(error instanceof HttpError) && !(error instanceof TypeError)) throw error;
+  const issues = (error.details?.issues || []).map((issue) => ({
+    ...issue,
+    path: `${archive.path}${issue.field ? `.${issue.field}` : ""}`,
+  }));
+  const location = archive.label ? `${archive.path} (“${archive.label}”)` : archive.path;
+  return new HttpError(
+    error instanceof HttpError ? error.status : 422,
+    error instanceof HttpError ? error.code : "INVALID_ARCHIVE_VALUE",
+    `Error en ${location}: ${error.message}`,
+    {
+      ...(error.details || {}),
+      archive: { ...archive, fields },
+      ...(issues.length ? { issues } : {}),
+    },
+  );
+}
+
 async function importTripArchive(archive, user, tripId) {
   if (archive?.format !== ARCHIVE_FORMAT || ![1, 2, ARCHIVE_SCHEMA_VERSION].includes(archive?.schemaVersion)) {
     throw new HttpError(
       422,
       "INVALID_ARCHIVE",
-      "El archivo no es un proyecto Tabi compatible.",
+      `El archivo no es un proyecto Tabi compatible: se esperaba format “${ARCHIVE_FORMAT}” y schemaVersion 1, 2 o ${ARCHIVE_SCHEMA_VERSION}.`,
+      {
+        archive: {
+          path: archive?.format !== ARCHIVE_FORMAT ? "format" : "schemaVersion",
+          received: archive?.format !== ARCHIVE_FORMAT ? archive?.format : archive?.schemaVersion,
+        },
+      },
     );
   }
   if (!archive.trip || typeof archive.trip !== "object" || Array.isArray(archive.trip)) {
-    throw new HttpError(422, "INVALID_ARCHIVE", "El archivo no contiene los datos generales del viaje.");
+    throw new HttpError(422, "INVALID_ARCHIVE", "El archivo no contiene los datos generales del viaje.", {
+      archive: { path: "trip" },
+    });
   }
   const trip = {
     name: String(archive.trip.name || "").trim(),
@@ -916,19 +956,35 @@ async function importTripArchive(archive, user, tripId) {
     country: String(archive.trip.country || ""),
     startDate: archive.trip.startDate,
     endDate: archive.trip.endDate,
-    travelers: Number(archive.trip.travelers || 1),
+    travelers: Number(archive.trip.travelers ?? 1),
     budget: Number(archive.trip.budget || 0),
     currency: String(archive.trip.currency || "JPY"),
     extra: archive.trip.extra && typeof archive.trip.extra === "object" && !Array.isArray(archive.trip.extra)
       ? archive.trip.extra
       : {},
   };
-  validateTrip(trip);
+  try {
+    validateTrip(trip);
+  } catch (error) {
+    const fields = {
+      INVALID_TRIP: ["name"],
+      INVALID_DATES: ["startDate", "endDate"],
+      INVALID_TRAVELERS: ["travelers"],
+      INVALID_BUDGET: ["budget"],
+      INVALID_EXCHANGE_RATE: ["extra.manualExchangeRate"],
+      INVALID_CURRENCY_PAIR: ["currency", "extra.secondaryCurrency"],
+      INVALID_EXCHANGE_MODE: ["extra.exchangeRateMode"],
+      INVALID_TIME_ZONE: ["extra.timeZone"],
+    }[error.code] || [];
+    throw archiveValidationError(error, { path: fields.length === 1 ? `trip.${fields[0]}` : "trip" }, fields);
+  }
   if (!Number.isInteger(trip.travelers) || trip.travelers < 1 || !Number.isFinite(trip.budget) || trip.budget < 0) {
     throw new HttpError(422, "INVALID_ARCHIVE", "Viajeros o presupuesto no válidos en el archivo.");
   }
   if (!archive.collections || typeof archive.collections !== "object" || Array.isArray(archive.collections)) {
-    throw new HttpError(422, "INVALID_ARCHIVE", "El archivo no contiene las colecciones del viaje.");
+    throw new HttpError(422, "INVALID_ARCHIVE", "El archivo no contiene las colecciones del viaje.", {
+      archive: { path: "collections" },
+    });
   }
 
   const prepared = {};
@@ -939,21 +995,36 @@ async function importTripArchive(archive, user, tripId) {
       ? []
       : archive.collections[collection];
     if (!Array.isArray(sources)) {
-      throw new HttpError(422, "INVALID_ARCHIVE", `Falta la colección “${collection}” en el archivo.`);
+      throw new HttpError(422, "INVALID_ARCHIVE", `La colección “${collection}” falta o no es una lista.`, {
+        archive: { path: `collections.${collection}`, receivedType: typeof sources },
+      });
     }
     const sourceIds = new Set();
     idMaps[collection] = new Map();
     prepared[collection] = [];
-    for (const source of sources) {
+    for (const [index, source] of sources.entries()) {
       if (!source || typeof source !== "object" || Array.isArray(source)) {
-        throw new HttpError(422, "INVALID_ARCHIVE", `Hay un elemento no válido en “${collection}”.`);
+        throw new HttpError(
+          422,
+          "INVALID_ARCHIVE",
+          `El valor de collections.${collection}[${index}] debe ser un objeto.`,
+          { archive: { collection, index, path: `collections.${collection}[${index}]` } },
+        );
       }
+      const archiveContext = archiveItemContext(collection, index, source);
       const sourceId = source.id == null ? "" : String(source.id);
       if (sourceId && !/^[A-Za-z0-9_-]{1,120}$/.test(sourceId)) {
-        throw new HttpError(422, "INVALID_ARCHIVE", `Hay un id no válido en “${collection}”.`);
+        throw new HttpError(422, "INVALID_ARCHIVE", `El id de ${archiveContext.path} no es válido.`, {
+          archive: { ...archiveContext, path: `${archiveContext.path}.id` },
+        });
       }
       if (sourceId && sourceIds.has(sourceId)) {
-        throw new HttpError(422, "INVALID_ARCHIVE", `El id “${sourceId}” está repetido en “${collection}”.`);
+        throw new HttpError(
+          422,
+          "INVALID_ARCHIVE",
+          `El id “${sourceId}” está repetido en collections.${collection}[${index}].`,
+          { archive: { ...archiveContext, path: `${archiveContext.path}.id` } },
+        );
       }
       if (sourceId) sourceIds.add(sourceId);
       const collision = sourceId ? await db.prepare(`SELECT trip_id FROM ${table} WHERE id=?`).get(sourceId) : null;
@@ -961,17 +1032,25 @@ async function importTripArchive(archive, user, tripId) {
         ? sourceId
         : newId(collection.slice(0, 3));
       if (sourceId) idMaps[collection].set(sourceId, targetId);
-      let data = cleanEntity(source);
-      data = attachTemporalInstants(collection, data, trip.timeZone || trip.extra?.timeZone || "UTC");
-      attachExactMoney(data, ENTITY_CONTRACTS[collection]?.money || [], trip.currency);
-      validateEntity(collection, data);
-      await assertFinancialMembers(tripId, data, collection);
-      prepared[collection].push({ id: targetId, data });
+      try {
+        let data = cleanEntity(source);
+        data = attachTemporalInstants(collection, data, trip.timeZone || trip.extra?.timeZone || "UTC");
+        attachExactMoney(data, ENTITY_CONTRACTS[collection]?.money || [], trip.currency);
+        validateEntity(collection, data);
+        await assertFinancialMembers(tripId, data, collection);
+        prepared[collection].push({ id: targetId, data, archive: archiveContext });
+      } catch (error) {
+        throw archiveValidationError(error, archiveContext);
+      }
     }
   }
   await Promise.all(
     prepared.places.map(async (item) => {
-      if (googleMapsUrl(item.data.link)) item.data.link = await resolveGoogleMapsUrl(item.data.link);
+      try {
+        if (googleMapsUrl(item.data.link)) item.data.link = await resolveGoogleMapsUrl(item.data.link);
+      } catch (error) {
+        throw archiveValidationError(error, { ...item.archive, path: `${item.archive.path}.link` }, ["link"]);
+      }
     }),
   );
 
@@ -1010,7 +1089,8 @@ async function importTripArchive(archive, user, tripId) {
       throw new HttpError(
         422,
         "DUPLICATE_PLACE_IN_ARCHIVE",
-        `El archivo contiene el lugar duplicado “${item.data.name}”.`,
+        `El lugar “${item.data.name}” de ${item.archive.path} está repetido en el archivo.`,
+        { archive: { ...item.archive, path: `${item.archive.path}.name` }, duplicateId: duplicate.id },
       );
     }
     acceptedPlaces.push({ id: item.id, ...item.data });
@@ -1021,7 +1101,8 @@ async function importTripArchive(archive, user, tripId) {
       throw new HttpError(
         422,
         "DUPLICATE_INSPIRATION_IN_ARCHIVE",
-        "El archivo contiene enlaces de inspiración repetidos.",
+        `El enlace de ${item.archive.path} está repetido en el archivo.`,
+        { archive: { ...item.archive, path: `${item.archive.path}.url` } },
       );
     }
     inspirationUrls.add(item.data.url);

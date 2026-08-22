@@ -2355,13 +2355,15 @@ textarea {
   z-index: 200;
   right: 24px;
   bottom: 24px;
-  width: min(360px, calc(100% - 40px));
+  width: min(520px, calc(100% - 40px));
   border: 1px solid var(--line);
   border-left: 4px solid var(--accent);
   background: var(--surface);
   box-shadow: var(--shadow);
   border-radius: 13px;
   padding: 13px 16px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   animation: slide .2s ease;
 }
 .toast.error {
